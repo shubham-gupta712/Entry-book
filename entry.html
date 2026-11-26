@@ -130,7 +130,7 @@ const S = { user: null, me: null, tab: null, vendors: [], cfg: { banks: DEFAULT_
 const allTx = () => [...S.small.map(t => ({ ...t, _col: 'tx_small' })), ...S.main.map(t => ({ ...t, _col: 'tx_main' }))];
 const sortTx = rows => rows.sort((a, b) => b.dateKey - a.dateKey || ms(b) - ms(a));
 const role = () => S.me.role;
-const allowedTypes = () => role() === 'accountant' ? ['small'] : role() === 'owner' ? ['main1', 'main2'] : ALL_TYPES;
+const allowedTypes = () => role() === 'accountant' ? ['small'] : role() === 'owner' ? ['main1', 'main2'] : [];
 const visibleTypes = () => role() === 'accountant' ? ['small'] : ALL_TYPES;
 const canDirect = t => role() !== 'accountant' || (t.dateKey === keyOf() && Date.now() < ms(t) + EDIT_WINDOW_MS);
 
@@ -246,7 +246,7 @@ function bindForm(f, { types, t, onSubmit }) {
 /* ---------- tx table + actions ---------- */
 function txTable(rows, o = {}) {
   if (!rows.length) return '<p class=muted>No entries.</p>';
-  const act = o.act !== false;
+  const act = o.act !== false && role() !== 'admin';
   return `<div class=tw><table><thead><tr><th>Date</th><th>Vendor</th><th></th><th class=r>Amount</th><th class=r>Comm.</th><th>Mode</th>${act ? '<th></th>' : ''}</tr></thead><tbody>${rows.map(t => `
   <tr class="${t.status === 'void' ? 'void' : ''}"><td>${keyToStr(t.dateKey)}<small>${dt(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''}</small></td>
   <td>${esc(t.vendorName)}<small>${GROUPS[t.vendorType]}${t.note ? ' · ' + esc(t.note) : ''}</small></td>
@@ -508,7 +508,7 @@ const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase(
 const TABS = {
   accountant: [['entry', 'Entry'], ['tx', 'History'], ['ledger', 'Balances'], ['requests', 'My edits']],
   owner: [['dash', 'Dashboard'], ['entry', 'Add entry'], ['tx', 'Transactions'], ['ledger', 'Balances'], ['approvals', 'Approvals'], ['log', 'Action log']],
-  admin: [['tx', 'Transactions'], ['entry', 'Add entry'], ['vendors', 'Vendors'], ['users', 'Users'], ['settings', 'Settings'], ['ledger', 'Balances'], ['log', 'Action log']]
+  admin: [['tx', 'Transactions'], ['vendors', 'Vendors'], ['users', 'Users'], ['settings', 'Settings'], ['ledger', 'Balances'], ['log', 'Action log']]
 };
 
 function showLogin() {
