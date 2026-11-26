@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ledger Desk</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--ink:#1b1f24;--mut:#667085;--line:#e4e7ec;--pri:#0f766e;--in:#15803d;--out:#b91c1c;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#0b3b38;color:#fff}
+header small{display:block;opacity:.75;font-size:12px;text-transform:capitalize}
+nav{display:flex;gap:6px;overflow-x:auto;padding:8px 10px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav button{white-space:nowrap;border:0;background:#eef1f4;color:var(--ink);padding:8px 12px;border-radius:18px;font-size:14px;cursor:pointer}
+nav button.on{background:var(--pri);color:#fff}
+.bd{background:#dc2626;color:#fff;border-radius:9px;font-size:11px;padding:0 6px;margin-left:5px}
+main{padding:12px;max-width:1100px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+h2,h3{margin:0 0 10px}h2{font-size:18px}h3{font-size:16px}
+label{display:block;font-size:13px;color:var(--mut);margin-bottom:10px}
+input,select,textarea{width:100%;padding:10px;border:1px solid #cfd4dc;border-radius:8px;font:inherit;background:#fff;color:var(--ink);margin-top:4px}
+input[readonly]{background:#f1f3f5}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.seg label{margin:0}.seg input{display:none}
+.seg span{display:block;text-align:center;padding:10px;border:1px solid #cfd4dc;border-radius:8px;cursor:pointer;color:var(--ink);font-size:14px}
+.seg input:checked+span{background:var(--pri);color:#fff;border-color:var(--pri)}
+.seg.dir input[value=out]:checked+span{background:var(--out);border-color:var(--out)}
+.seg.dir input[value=in]:checked+span{background:var(--in);border-color:var(--in)}
+.btn{background:var(--pri);color:#fff;border:0;padding:11px 16px;border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
+.btn.sec{background:#e8ecf0;color:var(--ink)}.btn.red{background:var(--out)}.btn.sm{padding:6px 10px;font-size:13px}
+.btn:disabled{opacity:.5}
+.ghost{background:transparent;color:#fff;border:1px solid #ffffff66;padding:6px 10px;border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}
+.stat small{color:var(--mut);display:block;font-size:12px}.stat b{font-size:18px}
+.in{color:var(--in)}.out{color:var(--out)}.muted{color:var(--mut)}.warn{color:var(--warn)}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--mut);font-weight:600;white-space:nowrap}
+td.r,th.r{text-align:right;white-space:nowrap}
+td small{display:block;color:var(--mut);font-size:11.5px}
+tr.void td{opacity:.45;text-decoration:line-through}
+tr.sub td{font-weight:700;background:#f8fafb}
+.pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:700}
+.pill.in{background:#dcfce7;color:var(--in)}.pill.out{background:#fee2e2;color:var(--out)}
+.tag{display:inline-block;font-size:11px;background:#fef3c7;color:var(--warn);padding:1px 6px;border-radius:8px;margin-left:4px}
+.tag.g{background:#dcfce7;color:var(--in)}.tag.r{background:#fee2e2;color:var(--out)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.chips button{border:1px solid #cfd4dc;background:#fff;padding:5px 10px;border-radius:14px;font-size:13px;cursor:pointer}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.filters label{margin:0}
+.overlay{position:fixed;inset:0;background:#0007;display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet{background:#fff;width:100%;max-width:560px;max-height:92vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+@media(min-width:700px){.overlay{align-items:center}.sheet{border-radius:16px}}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#1b1f24;color:#fff;padding:10px 16px;border-radius:10px;z-index:30;max-width:92vw;display:none}
+#toast.err{background:#b91c1c}
+.login{max-width:380px;margin:12vh auto;padding:0 14px}
+.diff{font-size:13px;margin:6px 0;padding-left:16px}
+.big{font-size:22px;font-weight:700}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, setDoc, addDoc, onSnapshot, query, where, orderBy, limit, serverTimestamp, writeBatch, increment, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ================= 1. PASTE YOUR FIREBASE CONFIG HERE ================= */
+const firebaseConfig = {
+  apiKey: "PASTE_API_KEY",
+  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
+  projectId: "PASTE_PROJECT_ID",
+  appId: "PASTE_APP_ID"
+};
+/* ====================================================================== */
+
+const TZ = 'Asia/Kolkata';
+const EDIT_WINDOW_MS = 5 * 3600e3; // must match the 5 hours in firestore.rules
+const GROUPS = { small: 'Small vendors', main1: 'Main vendor 1', main2: 'Main vendor 2' };
+const ALL_TYPES = ['small', 'main1', 'main2'];
+const DEFAULT_BANKS = ['HDFC', 'SBI', 'ICICI', 'Axis', 'Kotak', 'PNB', 'Other'];
+const DEFAULT_MODES = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Card'];
+const LABEL = { vendorName: 'Vendor', dir: 'Direction', mode: 'Mode', bank: 'Bank', payMode: 'Pay mode', amount: 'Amount', commission: 'Commission', commType: 'Comm. type', note: 'Note', dateKey: 'Date', status: 'Status' };
+const FIELDS = ['vendorId', 'vendorName', 'vendorType', 'dir', 'mode', 'bank', 'payMode', 'amount', 'commission', 'commType', 'note', 'dateKey'];
+
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const inr = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(n || 0);
+const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+const sum = (a, f) => r2(a.reduce((s, x) => s + f(x), 0));
+const keyOf = (d = new Date()) => +new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d).replace(/-/g, '');
+const keyToStr = k => { const s = String(k); return `${s.slice(6)}-${s.slice(4, 6)}-${s.slice(0, 4)}`; };
+const keyToIso = k => { const s = String(k); return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6)}`; };
+const isoToKey = i => +String(i).replace(/-/g, '');
+const dt = ts => ts?.toDate ? new Intl.DateTimeFormat('en-IN', { timeZone: TZ, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }).format(ts.toDate()) : '…';
+const ms = t => t.createdAt?.toMillis?.() ?? Date.now();
+const byName = (a, b) => a.name.localeCompare(b.name);
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+function toast(msg, err) { const t = $('#toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', err ? 6000 : 2500); }
+const errMsg = e => /permission|insufficient/i.test(e?.code + ' ' + e?.message) ? 'Not allowed by the rules. If this is a new entry, check your phone date/time is correct and that you are within your permissions.' : (e?.message || String(e));
+function modal(html) {
+  const o = document.createElement('div'); o.className = 'overlay';
+  o.innerHTML = `<div class="sheet">${html}</div>`;
+  o.addEventListener('mousedown', e => { if (e.target === o) o.remove(); });
+  document.body.appendChild(o); o.close = () => o.remove(); return o;
+}
+
+/* ---------- setup check ---------- */
+const app = $('#app');
+if (firebaseConfig.apiKey.startsWith('PASTE')) {
+  app.innerHTML = '<div class="login"><div class="card"><h2>Setup needed</h2><p>Open <b>index.html</b> and paste your Firebase web config at the top of the script, then reload.</p></div></div>';
+  throw new Error('Firebase config missing');
+}
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+
+/* ---------- state ---------- */
+const S = { user: null, me: null, tab: null, vendors: [], cfg: { banks: DEFAULT_BANKS, modes: DEFAULT_MODES }, small: [], main: [], approvals: [], logs: [], users: [], unsubs: [], f: {}, loginMsg: '' };
+const allTx = () => [...S.small.map(t => ({ ...t, _col: 'tx_small' })), ...S.main.map(t => ({ ...t, _col: 'tx_main' }))];
+const sortTx = rows => rows.sort((a, b) => b.dateKey - a.dateKey || ms(b) - ms(a));
+const role = () => S.me.role;
+const allowedTypes = () => role() === 'accountant' ? ['small'] : role() === 'owner' ? ['main1', 'main2'] : ALL_TYPES;
+const visibleTypes = () => role() === 'accountant' ? ['small'] : ALL_TYPES;
+const canDirect = t => role() !== 'accountant' || (t.dateKey === keyOf() && Date.now() < ms(t) + EDIT_WINDOW_MS);
+
+/* ---------- ledger maths ---------- */
+// Net = In - Out. Per vendor: opening (carried forward) + today's net = closing (carried to next day).
+function ledgerFor(txs, key, types) {
+  const map = {};
+  const get = (id, name, type) => map[id] || (map[id] = { id, name, type, open: 0, in: 0, out: 0, given: 0, taken: 0 });
+  S.vendors.forEach(v => { if (types.includes(v.type) && v.active !== false) get(v.id, v.name, v.type); });
+  for (const t of txs) {
+    if (t.status === 'void' || !types.includes(t.vendorType) || t.dateKey > key) continue;
+    const r = get(t.vendorId, t.vendorName, t.vendorType);
+    if (t.dateKey < key) r.open += t.dir === 'in' ? t.amount : -t.amount;
+    else {
+      if (t.dir === 'in') r.in += t.amount; else r.out += t.amount;
+      if (t.commType === 'given') r.given += t.commission;
+      if (t.commType === 'taken') r.taken += t.commission;
+    }
+  }
+  return Object.values(map).map(r => ({ ...r, open: r2(r.open), in: r2(r.in), out: r2(r.out), given: r2(r.given), taken: r2(r.taken), close: r2(r.open + r.in - r.out) }));
+}
+function ledgerHtml(key, types) {
+  const rows = ledgerFor(allTx(), key, types);
+  let g = types.map(ty => {
+    const rs = rows.filter(r => r.type === ty && (r.open || r.in || r.out || r.close || r.given || r.taken)).sort(byName);
+    return { ty, rs, open: sum(rs, r => r.open), in: sum(rs, r => r.in), out: sum(rs, r => r.out), given: sum(rs, r => r.given), taken: sum(rs, r => r.taken), close: sum(rs, r => r.close) };
+  });
+  const T = { open: sum(g, x => x.open), in: sum(g, x => x.in), out: sum(g, x => x.out), close: sum(g, x => x.close), given: sum(g, x => x.given), taken: sum(g, x => x.taken) };
+  const bal = Math.abs(T.close) < 0.005;
+  const line = (n, r, cls = '') => `<tr class="${cls}"><td>${esc(n)}</td><td class=r>${inr(r.open)}</td><td class="r in">${inr(r.in)}</td><td class="r out">${inr(r.out)}</td><td class=r>${inr(r.taken)} / ${inr(r.given)}</td><td class="r ${r.close ? 'warn' : ''}"><b>${inr(r.close)}</b></td></tr>`;
+  return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><h3 style="margin:0">Tally for ${keyToStr(key)}</h3>
+    <span class="tag ${bal ? 'g' : ''}">${bal ? '✓ Balanced (₹0)' : 'Carry-forward ' + inr(T.close)}</span></div>
+    <div class="stats" style="margin:10px 0 0"><div class=stat><small>Opening (carried in)</small><b>${inr(T.open)}</b></div><div class=stat><small>Entries (In)</small><b class=in>${inr(T.in)}</b></div><div class=stat><small>Exits (Out)</small><b class=out>${inr(T.out)}</b></div><div class=stat><small>Closing (carry-forward)</small><b>${inr(T.close)}</b></div></div></div>
+    ${g.map(x => `<div class=card><h3>${GROUPS[x.ty]}</h3><div class=tw><table><thead><tr><th>Vendor</th><th class=r>Opening</th><th class=r>In</th><th class=r>Out</th><th class=r>Comm. taken / given</th><th class=r>Closing</th></tr></thead><tbody>
+      ${x.rs.map(r => line(r.name, r)).join('') || '<tr><td colspan=6 class=muted>No activity</td></tr>'}${x.rs.length > 1 ? line('Subtotal', x, 'sub') : ''}</tbody></table></div></div>`).join('')}
+    <p class=muted style="font-size:12px">Net = In − Out. All vendors together should close at ₹0; any vendor balance left over is carried forward to the next day. Commission is shown separately and is not part of the tally.</p>`;
+}
+
+/* ---------- writes ---------- */
+const clean = o => JSON.parse(JSON.stringify(o, (k, v) => v === undefined ? null : v));
+const mkLog = (action, x) => ({ ts: serverTimestamp(), by: S.user.uid, byName: S.me.name, role: role(), action, ...clean(x) });
+const brief = d => ({ dir: d.dir, amount: d.amount, mode: d.mode, bank: d.bank || '', payMode: d.payMode || '', commission: d.commission, commType: d.commType, note: d.note || '' });
+
+async function createTx(d) {
+  if (!allowedTypes().includes(d.vendorType)) throw new Error('You cannot add entries for this vendor.');
+  const col = d.vendorType === 'small' ? 'tx_small' : 'tx_main';
+  const ref = doc(collection(db, col)); const b = writeBatch(db);
+  b.set(ref, { ...d, status: 'active', editCount: 0, createdBy: S.user.uid, createdByName: S.me.name, createdAt: serverTimestamp() });
+  b.set(doc(collection(db, 'logs')), mkLog('create', { col, txId: ref.id, vendorName: d.vendorName, dateKey: d.dateKey, after: brief(d) }));
+  await b.commit();
+}
+async function changeTx(t, after, action, reason) {
+  const before = {}; Object.keys(after).forEach(k => before[k] = t[k] ?? '');
+  const b = writeBatch(db);
+  if (canDirect(t)) {
+    b.update(doc(db, t._col, t.id), { ...after, editedAt: serverTimestamp(), editedBy: S.user.uid, editedByName: S.me.name, editCount: increment(1) });
+    b.set(doc(collection(db, 'logs')), mkLog(action, { col: t._col, txId: t.id, vendorName: t.vendorName, dateKey: t.dateKey, before, after }));
+    await b.commit(); return 'done';
+  }
+  b.set(doc(collection(db, 'approvals')), { ...clean({ col: t._col, txId: t.id, vendorName: t.vendorName, dateKey: t.dateKey, before, after, reason: reason || '', requestedBy: S.user.uid, requestedByName: S.me.name, status: 'pending' }), requestedAt: serverTimestamp() });
+  b.set(doc(collection(db, 'logs')), mkLog('request_edit', { col: t._col, txId: t.id, vendorName: t.vendorName, dateKey: t.dateKey, before, after, reason: reason || '' }));
+  await b.commit(); return 'requested';
+}
+async function decide(a, ok, note) {
+  const b = writeBatch(db);
+  if (ok) b.update(doc(db, a.col, a.txId), { ...a.after, editedAt: serverTimestamp(), editedBy: S.user.uid, editedByName: S.me.name, editCount: increment(1) });
+  b.update(doc(db, 'approvals', a.id), { status: ok ? 'approved' : 'rejected', decidedBy: S.user.uid, decidedByName: S.me.name, decidedAt: serverTimestamp(), decisionNote: note || '' });
+  b.set(doc(collection(db, 'logs')), mkLog(ok ? 'approved' : 'rejected', { col: a.col, txId: a.txId, vendorName: a.vendorName, dateKey: a.dateKey, before: a.before, after: a.after, requestedByName: a.requestedByName, reason: note || '' }));
+  await b.commit();
+}
+
+/* ---------- form ---------- */
+function formHtml(t = {}, o = {}) {
+  const v = (k, d = '') => esc(t[k] ?? d);
+  return `<form autocomplete="off">
+  <label>Vendor<select name=vendor required></select></label>
+  <div class="seg dir"><label><input type=radio name=dir value=in ${t.dir !== 'out' ? 'checked' : ''}><span>Entry (In)</span></label><label><input type=radio name=dir value=out ${t.dir === 'out' ? 'checked' : ''}><span>Exit (Out)</span></label></div>
+  <div class=seg><label><input type=radio name=mode value=cash ${t.mode !== 'online' ? 'checked' : ''}><span>Cash</span></label><label><input type=radio name=mode value=online ${t.mode === 'online' ? 'checked' : ''}><span>Online</span></label></div>
+  <div class=row2 data-online><label>Bank<select name=bank></select></label><label>Mode<select name=payMode></select></label></div>
+  <label>Amount (₹)<input name=amount type=number inputmode=decimal step=0.01 min=0.01 required value="${v('amount')}"></label>
+  <div class=row2><label>Commission (₹)<input name=commission type=number inputmode=decimal step=0.01 min=0 value="${v('commission', 0)}"></label>
+  <label>Commission is<select name=commType><option value=taken>Taken from vendor</option><option value=given>Given to vendor</option></select></label></div>
+  <label>Date<input name=date type=date required value="${keyToIso(t.dateKey || keyOf())}" ${o.dateEditable ? '' : 'readonly'}></label>
+  <label>Note (optional)<input name=note value="${v('note')}"></label>
+  ${o.reason ? '<label>Reason for change (sent to owner)<input name=reason required></label>' : ''}
+  <button class=btn type=submit>${o.submit || 'Save entry'}</button></form>`;
+}
+const fillSel = (sel, opts) => { const cur = sel.value; sel.innerHTML = opts.map(x => `<option value="${esc(x[0])}">${esc(x[1])}</option>`).join(''); if ([...sel.options].some(o => o.value === cur)) sel.value = cur; };
+function syncForm(f, types, curVendor) {
+  const vs = S.vendors.filter(v => types.includes(v.type) && (v.active !== false || v.id === curVendor)).sort(byName);
+  fillSel(f.elements.vendor, vs.map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]));
+  fillSel(f.elements.bank, S.cfg.banks.map(b => [b, b]));
+  fillSel(f.elements.payMode, S.cfg.modes.map(b => [b, b]));
+}
+function readForm(f) {
+  const g = n => f.elements[n].value; const v = S.vendors.find(x => x.id === g('vendor'));
+  if (!v) throw new Error('Choose a vendor (ask admin to add vendors first).');
+  const mode = g('mode'); const amount = r2(parseFloat(g('amount'))); const commission = r2(parseFloat(g('commission')) || 0);
+  if (!(amount > 0)) throw new Error('Enter a valid amount.');
+  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: g('dir'), mode, bank: mode === 'online' ? g('bank') : '', payMode: mode === 'online' ? g('payMode') : '', amount, commission, commType: commission > 0 ? g('commType') : 'none', note: g('note').trim(), dateKey: isoToKey(g('date')), reason: f.elements.reason?.value.trim() || '' };
+}
+function bindForm(f, { types, t, onSubmit }) {
+  syncForm(f, types, t?.vendorId);
+  if (t) { f.elements.vendor.value = t.vendorId; f.elements.bank.value = t.bank || f.elements.bank.value; f.elements.payMode.value = t.payMode || f.elements.payMode.value; f.elements.commType.value = t.commType === 'given' ? 'given' : 'taken'; }
+  const tog = () => { f.querySelector('[data-online]').style.display = f.elements.mode.value === 'online' ? '' : 'none'; f.elements.commType.disabled = !(parseFloat(f.elements.commission.value) > 0); };
+  f.addEventListener('input', tog); tog();
+  f.addEventListener('submit', async e => {
+    e.preventDefault(); const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
+    try { await onSubmit(readForm(f), f); } catch (err) { toast(errMsg(err), true); } finally { btn.disabled = false; }
+  });
+}
+
+/* ---------- tx table + actions ---------- */
+function txTable(rows, o = {}) {
+  if (!rows.length) return '<p class=muted>No entries.</p>';
+  const act = o.act !== false;
+  return `<div class=tw><table><thead><tr><th>Date</th><th>Vendor</th><th></th><th class=r>Amount</th><th class=r>Comm.</th><th>Mode</th>${act ? '<th></th>' : ''}</tr></thead><tbody>${rows.map(t => `
+  <tr class="${t.status === 'void' ? 'void' : ''}"><td>${keyToStr(t.dateKey)}<small>${dt(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''}</small></td>
+  <td>${esc(t.vendorName)}<small>${GROUPS[t.vendorType]}${t.note ? ' · ' + esc(t.note) : ''}</small></td>
+  <td><span class="pill ${t.dir}">${t.dir === 'in' ? 'IN' : 'OUT'}</span></td><td class="r ${t.dir}">${inr(t.amount)}</td>
+  <td class=r>${t.commission ? inr(t.commission) + `<small>${t.commType}</small>` : '–'}</td>
+  <td>${t.mode === 'cash' ? 'Cash' : esc(t.bank) + `<small>${esc(t.payMode)}</small>`}${t.editCount ? '<span class=tag>edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</td>
+  ${act ? `<td class=r style="white-space:nowrap"><button class="btn sec sm" data-act=edit data-col=${t._col} data-id=${t.id}>${canDirect(t) ? 'Edit' : 'Edit*'}</button>
+  <button class="btn sec sm" data-act=void data-col=${t._col} data-id=${t.id}>${t.status === 'void' ? 'Restore' : 'Void'}</button>
+  ${role() === 'admin' ? `<button class="btn red sm" data-act=del data-col=${t._col} data-id=${t.id}>✕</button>` : ''}</td>` : ''}</tr>`).join('')}</tbody></table></div>${o.note || ''}`;
+}
+const findTx = (col, id) => allTx().find(x => x._col === col && x.id === id);
+
+function openEdit(col, id) {
+  const t = findTx(col, id); if (!t) return;
+  const direct = canDirect(t);
+  const types = col === 'tx_small' ? ['small'] : ['main1', 'main2'];
+  const m = modal(`<h3>Edit entry</h3>${direct ? '' : '<p class=warn>The 5-hour edit window has passed. Your change goes to the owner for approval (marked Edit*).</p>'}${formHtml(t, { dateEditable: role() === 'admin', reason: !direct, submit: direct ? 'Save changes' : 'Send for approval' })}`);
+  bindForm($('form', m), { types, t, onSubmit: async d => {
+    const after = {}; FIELDS.forEach(k => { if (d[k] !== (t[k] ?? '') && !(k === 'note' && !d.note && !t.note)) after[k] = d[k]; });
+    if (!Object.keys(after).length) { toast('No changes.'); m.close(); return; }
+    if (after.vendorId) { after.vendorName = d.vendorName; after.vendorType = d.vendorType; }
+    const r = await changeTx(t, after, 'edit', d.reason); toast(r === 'done' ? 'Saved' : 'Sent to owner for approval'); m.close();
+  } });
+}
+
+const handlers = {
+  edit: d => openEdit(d.col, d.id),
+  async void(d) {
+    const t = findTx(d.col, d.id); if (!t) return; const v = t.status !== 'void';
+    if (!confirm(v ? 'Void this entry? It will be excluded from totals.' : 'Restore this entry?')) return;
+    let reason = ''; if (!canDirect(t)) { reason = prompt('Reason (sent to owner for approval):') || ''; if (!reason) return; }
+    try { const r = await changeTx(t, { status: v ? 'void' : 'active' }, v ? 'void' : 'restore', reason); toast(r === 'done' ? 'Done' : 'Sent to owner for approval'); } catch (e) { toast(errMsg(e), true); }
+  },
+  async del(d) {
+    const t = findTx(d.col, d.id); if (!t || !confirm('Permanently delete this entry? This cannot be undone.')) return;
+    const b = writeBatch(db); b.delete(doc(db, d.col, d.id));
+    b.set(doc(collection(db, 'logs')), mkLog('delete', { col: d.col, txId: d.id, vendorName: t.vendorName, dateKey: t.dateKey, before: brief(t) }));
+    try { await b.commit(); toast('Deleted'); } catch (e) { toast(errMsg(e), true); }
+  },
+  async approve(d) { const a = S.approvals.find(x => x.id === d.id); try { await decide(a, true); toast('Approved & applied'); } catch (e) { toast(errMsg(e), true); } },
+  async reject(d) { const a = S.approvals.find(x => x.id === d.id); const n = prompt('Reason for rejecting (optional):'); if (n === null) return; try { await decide(a, false, n); toast('Rejected'); } catch (e) { toast(errMsg(e), true); } },
+  async vtoggle(d) { const v = S.vendors.find(x => x.id === d.id); try { await setDoc(doc(db, 'vendors', d.id), { active: v.active === false }, { merge: true }); } catch (e) { toast(errMsg(e), true); } },
+  async vrename(d) { const v = S.vendors.find(x => x.id === d.id); const n = prompt('Vendor name:', v.name); if (!n || !n.trim()) return; try { await setDoc(doc(db, 'vendors', d.id), { name: n.trim() }, { merge: true }); toast('Renamed (old entries keep the old name)'); } catch (e) { toast(errMsg(e), true); } },
+  async vdel(d) {
+    const v = S.vendors.find(x => x.id === d.id);
+    if (allTx().some(t => t.vendorId === d.id)) return toast('This vendor has entries. Deactivate it instead.', true);
+    if (!confirm('Delete vendor ' + v.name + '?')) return;
+    try { await deleteDoc(doc(db, 'vendors', d.id)); } catch (e) { toast(errMsg(e), true); }
+  },
+  async utoggle(d) { const u = S.users.find(x => x.id === d.id); if (d.id === S.user.uid) return toast('You cannot disable yourself.', true); try { await setDoc(doc(db, 'users', d.id), { active: !u.active }, { merge: true }); } catch (e) { toast(errMsg(e), true); } },
+  go: d => go(d.tab)
+};
+document.addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (b && handlers[b.dataset.act]) handlers[b.dataset.act](b.dataset); });
+document.addEventListener('change', async e => {
+  const s = e.target.closest('[data-urole]'); if (!s) return;
+  if (s.dataset.urole === S.user.uid) { toast('You cannot change your own role.', true); return refresh(); }
+  try { await setDoc(doc(db, 'users', s.dataset.urole), { role: s.value }, { merge: true }); toast('Role updated'); } catch (err) { toast(errMsg(err), true); }
+});
+
+/* ---------- Excel export ---------- */
+function download(sheets, name) {
+  const wb = XLSX.utils.book_new();
+  Object.entries(sheets).forEach(([n, rows]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), n.slice(0, 31)));
+  XLSX.writeFile(wb, `${name}_${keyOf()}.xlsx`);
+}
+function exportTx(rows) {
+  const data = rows.map(t => ({ Date: keyToStr(t.dateKey), Time: dt(t.createdAt), Group: GROUPS[t.vendorType], Vendor: t.vendorName, Direction: t.dir === 'in' ? 'Entry (In)' : 'Exit (Out)', Mode: t.mode, Bank: t.bank, 'Pay mode': t.payMode, Amount: t.amount, Commission: t.commission, 'Commission type': t.commType, Status: t.status, Note: t.note || '', 'Entered by': t.createdByName || '', Edits: t.editCount || 0, 'Last edited by': t.editedByName || '' }));
+  const vm = {}; rows.filter(t => t.status !== 'void').forEach(t => { const r = vm[t.vendorId] ||= { Group: GROUPS[t.vendorType], Vendor: t.vendorName, In: 0, Out: 0, Net: 0, 'Commission taken': 0, 'Commission given': 0 }; if (t.dir === 'in') r.In += t.amount; else r.Out += t.amount; r.Net = r2(r.In - r.Out); if (t.commType === 'taken') r['Commission taken'] += t.commission; if (t.commType === 'given') r['Commission given'] += t.commission; });
+  download({ Transactions: data, 'Vendor summary': Object.values(vm) }, 'transactions');
+}
+
+/* ================= VIEWS ================= */
+const VIEWS = {};
+const live = root => $('#live', root);
+
+/* --- Add entry --- */
+VIEWS.entry = (() => { let root;
+  return {
+    init(m) {
+      root = m; const owner = role() === 'owner', adm = role() === 'admin';
+      m.innerHTML = `<div class=card><h2>New entry${owner ? ' – Main vendors' : ''}</h2>${formHtml({}, { dateEditable: adm })}</div><div id=live></div>`;
+      bindForm($('form', m), { types: allowedTypes(), onSubmit: async (d, f) => {
+        if (!adm && d.dateKey !== keyOf()) throw new Error('Entries can only be made for today.');
+        await createTx(d); toast('Saved'); f.elements.amount.value = ''; f.elements.commission.value = 0; f.elements.note.value = ''; f.dispatchEvent(new Event('input'));
+      } });
+    },
+    live() {
+      if (!root) return; const f = $('form', root); if (f) syncForm(f, allowedTypes());
+      const key = keyOf(); const rows = sortTx(allTx().filter(t => t.dateKey === key && allowedTypes().includes(t.vendorType)));
+      const act = rows.filter(t => t.status !== 'void');
+      live(root).innerHTML = `<div class=stats><div class=stat><small>Today In</small><b class=in>${inr(sum(act.filter(t => t.dir === 'in'), t => t.amount))}</b></div><div class=stat><small>Today Out</small><b class=out>${inr(sum(act.filter(t => t.dir === 'out'), t => t.amount))}</b></div>
+      <div class=stat><small>Commission taken / given</small><b>${inr(sum(act.filter(t => t.commType === 'taken'), t => t.commission))} / ${inr(sum(act.filter(t => t.commType === 'given'), t => t.commission))}</b></div></div>
+      <div class=card><h3>Today's entries (${rows.length})</h3>${txTable(rows, { note: role() === 'accountant' ? '<p class=muted style="font-size:12px">Edit* = 5-hour window passed; change needs owner approval.</p>' : '' })}</div>`;
+    }
+  };
+})();
+
+/* --- Transactions / History --- */
+VIEWS.tx = (() => { let root; const F = () => S.f.tx ||= { from: keyToIso(keyOf()), to: keyToIso(keyOf()), vendor: '', group: '', dir: '', mode: '', bank: '', q: '', limit: 200 };
+  const filtered = () => { const f = F(); const fk = f.from ? isoToKey(f.from) : 0, tk = f.to ? isoToKey(f.to) : 99999999; const q = f.q.toLowerCase();
+    return sortTx(allTx().filter(t => visibleTypes().includes(t.vendorType) && t.dateKey >= fk && t.dateKey <= tk && (!f.vendor || t.vendorId === f.vendor) && (!f.group || t.vendorType === f.group) && (!f.dir || t.dir === f.dir) && (!f.mode || t.mode === f.mode) && (!f.bank || t.bank === f.bank) && (!q || (t.note || '').toLowerCase().includes(q) || t.vendorName.toLowerCase().includes(q)))); };
+  const setRange = (a, b) => { const f = F(); f.from = a; f.to = b; $('[name=from]', root).value = a; $('[name=to]', root).value = b; f.limit = 200; VIEWS.tx.live(); };
+  return {
+    init(m) {
+      root = m; const f = F(), adm = role() !== 'accountant';
+      m.innerHTML = `<div class=card><h2>${role() === 'accountant' ? 'History' : 'Transactions'}</h2>
+      <div class=chips>${['Today', 'Yesterday', 'This week', 'This month', 'Last month', 'All time'].map(c => `<button type=button data-q="${c}">${c}</button>`).join('')}</div>
+      <div class=filters>
+      <label>From<input type=date name=from value="${f.from}"></label><label>To<input type=date name=to value="${f.to}"></label>
+      <label>Vendor<select name=vendor></select></label>
+      ${adm ? '<label>Group<select name=group><option value="">All</option><option value=small>Small vendors</option><option value=main1>Main vendor 1</option><option value=main2>Main vendor 2</option></select></label>' : ''}
+      <label>Entry / Exit<select name=dir><option value="">All</option><option value=in>Entry (In)</option><option value=out>Exit (Out)</option></select></label>
+      <label>Cash / Online<select name=mode><option value="">All</option><option value=cash>Cash</option><option value=online>Online</option></select></label>
+      <label>Bank<select name=bank></select></label><label>Search<input name=q value="${esc(f.q)}" placeholder="vendor / note"></label></div>
+      ${role() !== 'accountant' ? '<button class=btn type=button data-x=1 style="margin-top:6px">⬇ Export to Excel (current filters)</button>' : ''}</div><div id=live></div>`;
+      const sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); fillSel($('[name=bank]', m), [['', 'All banks'], ...S.cfg.banks.map(b => [b, b])]); ['vendor', 'group', 'dir', 'mode', 'bank'].forEach(k => { const el = $(`[name=${k}]`, m); if (el) el.value = f[k]; }); };
+      sync(); VIEWS.tx.sync = sync;
+      m.addEventListener('input', e => { const n = e.target.name; if (n && n in f) { f[n] = e.target.value; f.limit = 200; VIEWS.tx.live(); } });
+      m.addEventListener('click', e => {
+        const q = e.target.dataset.q, today = keyToIso(keyOf());
+        if (q) { let a = today, b = today; const d = new Date(today + 'T00:00:00Z');
+          if (q === 'Yesterday') a = b = addDays(today, -1);
+          if (q === 'This week') a = addDays(today, -((d.getUTCDay() + 6) % 7));
+          if (q === 'This month') a = today.slice(0, 8) + '01';
+          if (q === 'Last month') { const s = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)); a = s.toISOString().slice(0, 10); b = addDays(today.slice(0, 8) + '01', -1); }
+          if (q === 'All time') { a = ''; b = ''; } setRange(a, b); }
+        if (e.target.dataset.x) exportTx(filtered());
+        if (e.target.dataset.more) { f.limit += 300; VIEWS.tx.live(); }
+      });
+    },
+    live() {
+      if (!root) return; VIEWS.tx.sync?.(); const rows = filtered(), act = rows.filter(t => t.status !== 'void'), f = F();
+      const inn = sum(act.filter(t => t.dir === 'in'), t => t.amount), out = sum(act.filter(t => t.dir === 'out'), t => t.amount);
+      live(root).innerHTML = `<div class=stats><div class=stat><small>Entries (In)</small><b class=in>${inr(inn)}</b></div><div class=stat><small>Exits (Out)</small><b class=out>${inr(out)}</b></div><div class=stat><small>Net (In − Out)</small><b>${inr(r2(inn - out))}</b></div>
+      <div class=stat><small>Commission taken</small><b>${inr(sum(act.filter(t => t.commType === 'taken'), t => t.commission))}</b></div><div class=stat><small>Commission given</small><b>${inr(sum(act.filter(t => t.commType === 'given'), t => t.commission))}</b></div><div class=stat><small>Entries shown</small><b>${rows.length}</b></div></div>
+      <div class=card>${txTable(rows.slice(0, f.limit), { note: rows.length > f.limit ? `<p><button class="btn sec" data-more=1>Show more</button></p>` : '' })}</div>`;
+    }
+  };
+})();
+
+/* --- Balances (per date, with carry-forward) --- */
+VIEWS.ledger = (() => { let root;
+  return {
+    init(m) {
+      root = m; const f = S.f.ledger ||= { d: keyToIso(keyOf()) };
+      m.innerHTML = `<div class=card><h2>Balances & carry-forward</h2><div class=row2><label>Date<input type=date name=d value="${f.d}"></label><div style="align-self:end;margin-bottom:10px"><button class="btn sec sm" data-n=-1>◀ Prev</button> <button class="btn sec sm" data-n=1>Next ▶</button> ${role() !== 'accountant' ? '<button class="btn sm" data-x=1>⬇ Excel</button>' : ''}</div></div></div><div id=live></div>`;
+      m.addEventListener('input', e => { if (e.target.name === 'd' && e.target.value) { f.d = e.target.value; VIEWS.ledger.live(); } });
+      m.addEventListener('click', e => { const n = e.target.dataset.n; if (n) { f.d = addDays(f.d, +n); $('[name=d]', m).value = f.d; VIEWS.ledger.live(); }
+        if (e.target.dataset.x) { const rows = ledgerFor(allTx(), isoToKey(f.d), visibleTypes()).map(r => ({ Group: GROUPS[r.type], Vendor: r.name, Opening: r.open, In: r.in, Out: r.out, 'Commission taken': r.taken, 'Commission given': r.given, Closing: r.close })); download({ Balances: rows }, 'balances_' + f.d); } });
+    },
+    live() { if (root) live(root).innerHTML = ledgerHtml(isoToKey(S.f.ledger.d), visibleTypes()); }
+  };
+})();
+
+/* --- Owner dashboard --- */
+VIEWS.dash = (() => { let root;
+  return {
+    init(m) { root = m; m.innerHTML = '<div id=live></div>'; },
+    live() {
+      if (!root) return; const key = keyOf(); const day = allTx().filter(t => t.dateKey === key && t.status !== 'void');
+      const pend = S.approvals.filter(a => a.status === 'pending').length;
+      const inn = sum(day.filter(t => t.dir === 'in'), t => t.amount), out = sum(day.filter(t => t.dir === 'out'), t => t.amount);
+      live(root).innerHTML = `<div class=stats><div class=stat><small>Today In</small><b class=in>${inr(inn)}</b></div><div class=stat><small>Today Out</small><b class=out>${inr(out)}</b></div><div class=stat><small>Today net</small><b>${inr(r2(inn - out))}</b></div>
+      <div class=stat><small>Commission net (taken − given)</small><b>${inr(r2(sum(day.filter(t => t.commType === 'taken'), t => t.commission) - sum(day.filter(t => t.commType === 'given'), t => t.commission)))}</b></div>
+      <div class=stat data-act=go data-tab=approvals style="cursor:pointer"><small>Pending approvals</small><b class="${pend ? 'warn' : ''}">${pend}</b></div></div>
+      ${ledgerHtml(key, ALL_TYPES)}
+      <div class=card><h3>Latest entries today</h3>${txTable(sortTx(allTx().filter(t => t.dateKey === key)).slice(0, 12), { act: false })}</div>`;
+    }
+  };
+})();
+
+/* --- Approvals --- */
+const diffHtml = (b, a) => Object.keys(a).filter(k => LABEL[k]).map(k => { const f = (k, v) => k === 'dateKey' ? keyToStr(v) : k === 'amount' || k === 'commission' ? inr(v) : k === 'dir' ? (v === 'in' ? 'Entry (In)' : 'Exit (Out)') : (v === '' || v == null ? '–' : esc(v)); return `<div class=diff>${LABEL[k]}: <s class=muted>${f(k, b?.[k])}</s> → <b>${f(k, a[k])}</b></div>`; }).join('');
+VIEWS.approvals = (() => { let root;
+  return {
+    init(m) { root = m; m.innerHTML = '<div id=live></div>'; },
+    live() {
+      if (!root) return; const ts = a => a.requestedAt?.toMillis?.() ?? Date.now();
+      const pend = S.approvals.filter(a => a.status === 'pending').sort((a, b) => ts(a) - ts(b)), done = S.approvals.filter(a => a.status !== 'pending').sort((a, b) => ts(b) - ts(a)).slice(0, 40);
+      live(root).innerHTML = `<div class=card><h2>Pending approvals (${pend.length})</h2>${pend.map(a => `<div style="border-top:1px solid var(--line);padding:10px 0"><b>${esc(a.vendorName)}</b> · ${keyToStr(a.dateKey)}<small class=muted style="display:block">Requested by ${esc(a.requestedByName)} · ${dt(a.requestedAt)}</small>
+        ${diffHtml(a.before, a.after)}${a.reason ? `<div class=muted>Reason: ${esc(a.reason)}</div>` : ''}<div style="margin-top:8px"><button class="btn sm" data-act=approve data-id=${a.id}>Approve</button> <button class="btn red sm" data-act=reject data-id=${a.id}>Reject</button></div></div>`).join('') || '<p class=muted>Nothing waiting.</p>'}</div>
+      <div class=card><h3>Decided</h3>${done.map(a => `<div style="border-top:1px solid var(--line);padding:8px 0"><b>${esc(a.vendorName)}</b> · ${keyToStr(a.dateKey)} <span class="tag ${a.status === 'approved' ? 'g' : 'r'}">${a.status}</span><small class=muted style="display:block">${esc(a.requestedByName)} → ${esc(a.decidedByName || '')} · ${dt(a.decidedAt)}${a.decisionNote ? ' · ' + esc(a.decisionNote) : ''}</small>${diffHtml(a.before, a.after)}</div>`).join('') || '<p class=muted>None yet.</p>'}</div>`;
+    }
+  };
+})();
+
+/* --- Accountant: my edit requests --- */
+VIEWS.requests = (() => { let root;
+  return {
+    init(m) { root = m; m.innerHTML = '<div id=live></div>'; },
+    live() {
+      if (!root) return; const ts = a => a.requestedAt?.toMillis?.() ?? Date.now();
+      live(root).innerHTML = `<div class=card><h2>My edit requests</h2>${[...S.approvals].sort((a, b) => ts(b) - ts(a)).map(a => `<div style="border-top:1px solid var(--line);padding:8px 0"><b>${esc(a.vendorName)}</b> · ${keyToStr(a.dateKey)} <span class="tag ${a.status === 'approved' ? 'g' : a.status === 'rejected' ? 'r' : ''}">${a.status}</span>${diffHtml(a.before, a.after)}${a.decisionNote ? `<div class=muted>Owner: ${esc(a.decisionNote)}</div>` : ''}</div>`).join('') || '<p class=muted>No requests.</p>'}</div>`;
+    }
+  };
+})();
+
+/* --- Action log --- */
+function describeLog(l) {
+  const b = l.before || {}, a = l.after || {};
+  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.dir === 'in' ? 'IN' : 'OUT'} ${inr(x.amount)} · ${x.mode}${x.bank ? ' ' + esc(x.bank) + '/' + esc(x.payMode) : ''}${x.commission ? ' · comm ' + inr(x.commission) + ' ' + x.commType : ''}`; }
+  return diffHtml(b, a) + (l.reason ? `<div class=muted>${esc(l.reason)}</div>` : '');
+}
+VIEWS.log = (() => { let root;
+  const F = () => S.f.log ||= { action: '', q: '' };
+  const rows = () => { const f = F(), q = f.q.toLowerCase(); return S.logs.filter(l => (!f.action || l.action === f.action) && (!q || (l.vendorName || '').toLowerCase().includes(q) || (l.byName || '').toLowerCase().includes(q))); };
+  return {
+    init(m) { root = m; const f = F();
+      m.innerHTML = `<div class=card><h2>Action log</h2><div class=filters><label>Action<select name=action><option value="">All</option>${['create', 'edit', 'void', 'restore', 'request_edit', 'approved', 'rejected', 'delete'].map(a => `<option value=${a}>${a}</option>`).join('')}</select></label><label>Search<input name=q placeholder="vendor / user" value="${esc(f.q)}"></label></div><button class="btn" data-x=1 style="margin-top:6px">⬇ Export to Excel</button></div><div id=live></div>`;
+      $('[name=action]', m).value = f.action;
+      m.addEventListener('input', e => { if (e.target.name in f) { f[e.target.name] = e.target.value; VIEWS.log.live(); } });
+      m.addEventListener('click', e => { if (e.target.dataset.x) download({ Log: rows().map(l => ({ Time: dt(l.ts), User: l.byName, Role: l.role, Action: l.action, Vendor: l.vendorName || '', 'Entry date': l.dateKey ? keyToStr(l.dateKey) : '', Before: JSON.stringify(l.before || {}), After: JSON.stringify(l.after || {}), Reason: l.reason || '' })) }, 'action_log'); });
+    },
+    live() { if (root) live(root).innerHTML = `<div class=card><div class=tw><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Entry</th><th>Details</th></tr></thead><tbody>${rows().slice(0, 300).map(l => `<tr><td>${dt(l.ts)}</td><td>${esc(l.byName)}<small>${l.role}</small></td><td><span class=tag>${l.action}</span></td><td>${esc(l.vendorName || '')}<small>${l.dateKey ? keyToStr(l.dateKey) : ''}</small></td><td>${describeLog(l)}</td></tr>`).join('') || '<tr><td colspan=5 class=muted>No log entries.</td></tr>'}</tbody></table></div></div>`; }
+  };
+})();
+
+/* --- Admin: vendors --- */
+VIEWS.vendors = (() => { let root;
+  return {
+    init(m) { root = m;
+      m.innerHTML = `<div class=card><h2>Add vendor</h2><form><div class=row2><label>Name<input name=name required></label><label>Group<select name=type><option value=small>Small vendor</option><option value=main1>Main vendor 1</option><option value=main2>Main vendor 2</option></select></label></div><button class=btn>Add vendor</button></form></div><div id=live></div>`;
+      $('form', m).addEventListener('submit', async e => { e.preventDefault(); const f = e.target; try { await addDoc(collection(db, 'vendors'), { name: f.name.value.trim(), type: f.type.value, active: true, createdAt: serverTimestamp() }); f.name.value = ''; toast('Vendor added'); } catch (err) { toast(errMsg(err), true); } });
+    },
+    live() { if (root) live(root).innerHTML = ALL_TYPES.map(ty => `<div class=card><h3>${GROUPS[ty]}</h3><div class=tw><table><tbody>${S.vendors.filter(v => v.type === ty).sort(byName).map(v => `<tr><td>${esc(v.name)} ${v.active === false ? '<span class="tag r">inactive</span>' : ''}</td><td class=r style="white-space:nowrap"><button class="btn sec sm" data-act=vrename data-id=${v.id}>Rename</button> <button class="btn sec sm" data-act=vtoggle data-id=${v.id}>${v.active === false ? 'Activate' : 'Deactivate'}</button> <button class="btn red sm" data-act=vdel data-id=${v.id}>✕</button></td></tr>`).join('') || '<tr><td class=muted>None</td></tr>'}</tbody></table></div></div>`).join(''); }
+  };
+})();
+
+/* --- Admin: users --- */
+let secAuth;
+VIEWS.users = (() => { let root;
+  return {
+    init(m) { root = m;
+      m.innerHTML = `<div class=card><h2>Create login</h2><form><label>Full name<input name=name required></label><label>Username or email<input name=username required autocapitalize=off></label><label>Password (min 6)<input name=pw type=text minlength=6 required></label><label>Role<select name=role><option value=accountant>Accountant</option><option value=owner>Owner</option><option value=admin>Admin</option></select></label><button class=btn>Create login</button></form></div><div id=live></div>`;
+      $('form', m).addEventListener('submit', async e => { e.preventDefault(); const f = e.target, btn = f.querySelector('button'); btn.disabled = true;
+        try { const email = toEmail(f.username.value); secAuth ||= getAuth(initializeApp(firebaseConfig, 'secondary'));
+          const c = await createUserWithEmailAndPassword(secAuth, email, f.pw.value); await signOut(secAuth);
+          await setDoc(doc(db, 'users', c.user.uid), { name: f.name.value.trim(), username: f.username.value.trim(), email, role: f.role.value, active: true, createdAt: serverTimestamp() });
+          f.reset(); toast('Login created'); } catch (err) { toast(errMsg(err), true); } finally { btn.disabled = false; } });
+    },
+    live() { if (root) live(root).innerHTML = `<div class=card><h3>Logins</h3><div class=tw><table><tbody>${S.users.sort(byName).map(u => `<tr><td>${esc(u.name)}<small>${esc(u.username || u.email)}</small></td><td><select data-urole=${u.id}>${['accountant', 'owner', 'admin'].map(r => `<option ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></td><td class=r><button class="btn sec sm" data-act=utoggle data-id=${u.id}>${u.active ? 'Disable' : 'Enable'}</button></td></tr>`).join('')}</tbody></table></div><p class=muted style="font-size:12px">Password resets: do it in Firebase Console → Authentication, or create a fresh login.</p></div>`; }
+  };
+})();
+
+/* --- Admin: settings --- */
+VIEWS.settings = (() => { let root, dirty = false;
+  return {
+    init(m) { root = m; dirty = false;
+      m.innerHTML = `<div class=card><h2>Banks & online modes</h2><label>Banks (one per line)<textarea name=banks rows=7></textarea></label><label>Online modes (one per line)<textarea name=modes rows=6></textarea></label><button class=btn id=sv>Save</button><p class=muted style="font-size:12px">Edit window (5 hours) is set inside firestore.rules.</p></div>`;
+      m.addEventListener('input', () => dirty = true);
+      $('#sv', m).onclick = async () => { const l = n => $(`[name=${n}]`, m).value.split('\n').map(x => x.trim()).filter(Boolean); try { await setDoc(doc(db, 'settings', 'config'), { banks: l('banks'), modes: l('modes') }); dirty = false; toast('Saved'); } catch (e) { toast(errMsg(e), true); } };
+    },
+    live() { if (root && !dirty) { $('[name=banks]', root).value = S.cfg.banks.join('\n'); $('[name=modes]', root).value = S.cfg.modes.join('\n'); } }
+  };
+})();
+
+/* ================= shell / auth ================= */
+const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase().replace(/\s+/g, '') + '@ledger.local'; };
+const TABS = {
+  accountant: [['entry', 'Entry'], ['tx', 'History'], ['ledger', 'Balances'], ['requests', 'My edits']],
+  owner: [['dash', 'Dashboard'], ['entry', 'Add entry'], ['tx', 'Transactions'], ['ledger', 'Balances'], ['approvals', 'Approvals'], ['log', 'Action log']],
+  admin: [['tx', 'Transactions'], ['entry', 'Add entry'], ['vendors', 'Vendors'], ['users', 'Users'], ['settings', 'Settings'], ['ledger', 'Balances'], ['log', 'Action log']]
+};
+
+function showLogin() {
+  app.innerHTML = `<div class=login><div class=card><h2>Ledger Desk</h2><form id=lf><label>Username or email<input name=u required autocapitalize=off autocomplete=username></label><label>Password<input name=p type=password required autocomplete=current-password></label><button class=btn style="width:100%">Log in</button><p class=out id=lm>${esc(S.loginMsg)}</p></form></div></div>`;
+  $('#lf').onsubmit = async e => { e.preventDefault(); const f = e.target; S.loginMsg = ''; $('#lm').textContent = '';
+    try { await signInWithEmailAndPassword(auth, toEmail(f.u.value), f.p.value); } catch (err) { $('#lm').textContent = 'Login failed. Check username and password.'; } };
+}
+function showApp() {
+  app.innerHTML = `<header><div><b>Ledger Desk</b><small>${esc(S.me.name)} · ${S.me.role}</small></div><button class=ghost id=lo>Log out</button></header><nav id=nav>${TABS[role()].map(([k, n]) => `<button data-tab=${k}>${n}${k === 'approvals' ? '<span class=bd id=bd style="display:none"></span>' : ''}</button>`).join('')}</nav><main id=main></main>`;
+  $('#lo').onclick = () => signOut(auth);
+  $('#nav').onclick = e => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); };
+  go(TABS[role()][0][0]);
+}
+function go(tab) {
+  S.tab = tab; document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  const m = $('#main'); m.innerHTML = ''; VIEWS[tab].init(m); VIEWS[tab].live?.(); window.scrollTo(0, 0);
+}
+let raf; function refresh() { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => {
+  const bd = $('#bd'); if (bd) { const n = S.approvals.filter(a => a.status === 'pending').length; bd.textContent = n; bd.style.display = n ? '' : 'none'; }
+  if (S.tab && VIEWS[S.tab]) VIEWS[S.tab].live?.(); }); }
+
+function listen(q, key) { S.unsubs.push(onSnapshot(q, snap => { S[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); refresh(); }, err => toast('Cannot read ' + key + ': ' + err.message, true))); }
+function startSession() {
+  const r = role();
+  S.unsubs.push(onSnapshot(doc(db, 'settings', 'config'), s => { if (s.exists()) S.cfg = { banks: s.data().banks?.length ? s.data().banks : DEFAULT_BANKS, modes: s.data().modes?.length ? s.data().modes : DEFAULT_MODES }; refresh(); }));
+  if (r === 'accountant') {
+    listen(query(collection(db, 'vendors'), where('type', '==', 'small')), 'vendors');
+    listen(collection(db, 'tx_small'), 'small');
+    listen(query(collection(db, 'approvals'), where('requestedBy', '==', S.user.uid)), 'approvals');
+  } else {
+    listen(collection(db, 'vendors'), 'vendors'); listen(collection(db, 'tx_small'), 'small'); listen(collection(db, 'tx_main'), 'main');
+    listen(collection(db, 'approvals'), 'approvals'); listen(query(collection(db, 'logs'), orderBy('ts', 'desc'), limit(1000)), 'logs');
+    if (r === 'admin') listen(collection(db, 'users'), 'users');
+  }
+}
+function teardown() { S.unsubs.forEach(u => u()); Object.assign(S, { unsubs: [], vendors: [], small: [], main: [], approvals: [], logs: [], users: [], f: {}, tab: null }); }
+
+onAuthStateChanged(auth, async u => {
+  teardown();
+  if (!u) { S.user = S.me = null; showLogin(); return; }
+  try {
+    const s = await getDoc(doc(db, 'users', u.uid));
+    if (!s.exists() || !s.data().active) { S.loginMsg = 'This login is not set up or is disabled. Contact the admin.'; await signOut(auth); return; }
+    S.user = u; S.me = s.data(); startSession(); showApp();
+  } catch (e) { S.loginMsg = 'Could not load your profile: ' + e.message; await signOut(auth); }
+});
+</script>
+</body>
+</html>
