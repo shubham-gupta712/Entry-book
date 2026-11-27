@@ -26,7 +26,7 @@ nav .bd{position:absolute;top:2px;left:54%}
 .bd2{margin-left:5px;display:inline-block}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:8px}
 h2,h3{margin:0 0 8px}h2{font-size:16px}h3{font-size:15px}
-label{display:block;font-size:11px;color:var(--mut);margin:0 0 6px}
+label{display:block;font-size:11px;color:var(--mut);margin:0 0 8px}
 input,select,textarea{width:100%;min-width:0;padding:8px 9px;border:1px solid #cfd5dc;border-radius:8px;font:inherit;font-size:15px;background:#fff;color:var(--ink);margin-top:2px}
 input[readonly]{background:#f1f3f5;color:var(--mut)}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -171,7 +171,7 @@ const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 
 /* ---------- state ---------- */
-const S = { user: null, me: null, tab: null, vendors: [], cfg: { banks: DEFAULT_BANKS, modes: DEFAULT_MODES }, small: [], main: [], approvals: [], logs: [], users: [], unsubs: [], f: {}, loginMsg: '' };
+const S = { user: null, me: null, tab: null, vendors: [], cfg: { banks: DEFAULT_BANKS, modes: DEFAULT_MODES }, small: [], main: [], approvals: [], logs: [], users: [], unsubs: [], f: {}, loginMsg: '', ready: {} };
 const allTx = () => [...S.small.map(t => ({ ...t, _col: 'tx_small' })), ...S.main.map(t => ({ ...t, _col: 'tx_main' }))];
 const sortTx = rows => rows.sort((a, b) => b.dateKey - a.dateKey || ms(b) - ms(a));
 const role = () => S.me.role;
@@ -213,8 +213,8 @@ const clean = o => JSON.parse(JSON.stringify(o, (k, v) => v === undefined ? null
 const mkLog = (action, x) => ({ ts: serverTimestamp(), by: S.user.uid, byName: S.me.name, role: role(), action, ...clean(x) });
 const brief = d => ({ dir: d.dir, amount: d.amount, mode: d.mode, bank: d.bank || '', payMode: d.payMode || '', commission: d.commission, commType: d.commType, note: d.note || '' });
 
-async function createTx(d) {
-  if (!allowedTypes().includes(d.vendorType)) throw new Error('You cannot add entries for this vendor.');
+async function createTx(d, any) {
+  if (!(any ? ALL_TYPES : allowedTypes()).includes(d.vendorType)) throw new Error('You cannot add entries for this vendor.');
   const col = d.vendorType === 'small' ? 'tx_small' : 'tx_main';
   const ref = doc(collection(db, col)); const b = writeBatch(db);
   const { reason, ...data } = d;
@@ -253,7 +253,7 @@ function formHtml(t = {}, o = {}) {
   <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${v('amount')}"></label>
   <div class="row2"><label>Commission (₹)<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${v('commission', 0)}"></label>
   <label>Commission is<select name="commType"><option value="taken">Taken from vendor</option><option value="given">Given to vendor</option></select></label></div>
-  <div class="row2"><label>Date<input name="date" type="date" required value="${keyToIso(t.dateKey || keyOf())}" ${o.dateEditable ? '' : 'readonly'}></label>
+  <div class="row2"><label>Date${o.dateEditable ? '' : ' (today only)'}<input name="date" type="date" required value="${keyToIso(t.dateKey || keyOf())}" ${o.dateEditable ? `max="${keyToIso(keyOf())}"` : 'readonly'}></label>
   <label>Note (optional)<input name="note" value="${v('note')}"></label></div>
   ${o.reason ? '<label>Reason for change (sent to owner)<input name="reason" required></label>' : ''}
   <button class="btn full" type="submit">${o.submit || 'Save entry'}</button></form>`;
@@ -261,7 +261,8 @@ function formHtml(t = {}, o = {}) {
 const fillSel = (sel, opts) => { const cur = sel.value; sel.innerHTML = opts.map(x => `<option value="${esc(x[0])}">${esc(x[1])}</option>`).join(''); if ([...sel.options].some(o => o.value === cur)) sel.value = cur; };
 function syncForm(f, types, curVendor) {
   const vs = S.vendors.filter(v => types.includes(v.type) && (v.active !== false || v.id === curVendor)).sort(byName);
-  fillSel(f.elements.vendor, vs.map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]));
+  const vo = vs.map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]);
+  fillSel(f.elements.vendor, vo.length ? vo : [['', 'No vendors yet – ask admin to add']]);
   fillSel(f.elements.bank, S.cfg.banks.map(b => [b, b]));
   fillSel(f.elements.payMode, S.cfg.modes.map(b => [b, b]));
 }
@@ -275,7 +276,7 @@ function readForm(f) {
 function bindForm(f, { types, t, onSubmit }) {
   syncForm(f, types, t?.vendorId);
   if (t) { f.elements.vendor.value = t.vendorId; f.elements.bank.value = t.bank || f.elements.bank.value; f.elements.payMode.value = t.payMode || f.elements.payMode.value; f.elements.commType.value = t.commType === 'given' ? 'given' : 'taken'; }
-  const tog = () => { f.querySelector('[data-online]').hidden = f.elements.mode.value !== 'online'; f.elements.commType.disabled = !(parseFloat(f.elements.commission.value) > 0); };
+  const tog = () => { f.querySelector('[data-online]').hidden = f.elements.mode.value !== 'online';  };
   f.addEventListener('input', tog); tog();
   f.addEventListener('submit', async e => {
     e.preventDefault(); const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
@@ -290,7 +291,7 @@ function txList(rows, o = {}) {
   return rows.map(t => `<div class="li ${t.status === 'void' ? 'void' : ''}"><div class="l">
     <b>${esc(t.vendorName)}${t.editCount ? '<span class="tag">edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</b>
     <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.mode === 'cash' ? 'Cash' : esc(t.bank) + '/' + esc(t.payMode)}${t.note ? ' · ' + esc(t.note) : ''}</small>
-    ${act ? `<div class="acts"><button class="btn sec xs" data-act="edit" data-col="${t._col}" data-id="${t.id}">${canDirect(t) ? 'Edit' : 'Edit*'}</button><button class="btn sec xs" data-act="void" data-col="${t._col}" data-id="${t.id}">${t.status === 'void' ? 'Restore' : 'Void'}</button></div>` : ''}</div>
+    ${act ? `<div class="acts"><button class="btn sec xs" data-act="edit" data-col="${t._col}" data-id="${t.id}">${canDirect(t) ? 'Edit' : 'Edit*'}</button><button class="btn sec xs" data-act="void" data-col="${t._col}" data-id="${t.id}">${t.status === 'void' ? 'Restore' : 'Void'}</button>${o.del && role() === 'owner' ? `<button class="btn red xs" data-act="del" data-col="${t._col}" data-id="${t.id}">Delete</button>` : ''}</div>` : ''}</div>
     <div class="r"><b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>${t.commission ? `<small>comm ${inr(t.commission)} ${t.commType}</small>` : ''}</div></div>`).join('') + (o.note || '');
 }
 const findTx = (col, id) => allTx().find(x => x._col === col && x.id === id);
@@ -299,8 +300,9 @@ function openEdit(col, id) {
   const t = findTx(col, id); if (!t) return;
   const direct = canDirect(t);
   const types = col === 'tx_small' ? ['small'] : ['main1', 'main2'];
-  const m = modal(`<h3>Edit entry</h3>${direct ? '' : '<p class="warn" style="margin:0 0 8px">The 5-hour edit window has passed. Your change goes to the owner for approval.</p>'}${formHtml(t, { reason: !direct, submit: direct ? 'Save changes' : 'Send for approval' })}`);
+  const m = modal(`<h3>Edit entry</h3>${direct ? '' : '<p class="warn" style="margin:0 0 8px">The 5-hour edit window has passed. Your change goes to the owner for approval.</p>'}${formHtml(t, { dateEditable: role() === 'owner', reason: !direct, submit: direct ? 'Save changes' : 'Send for approval' })}`);
   bindForm($('form', m), { types, t, onSubmit: async d => {
+    if (d.dateKey > keyOf()) throw new Error('Date cannot be in the future.');
     const after = {}; FIELDS.forEach(k => { if (d[k] !== (t[k] ?? '') && !(k === 'note' && !d.note && !t.note)) after[k] = d[k]; });
     if (!Object.keys(after).length) { toast('No changes.'); m.close(); return; }
     if (after.vendorId) { after.vendorName = d.vendorName; after.vendorType = d.vendorType; }
@@ -319,7 +321,11 @@ const handlers = {
   async approve(d) { const a = S.approvals.find(x => x.id === d.id); try { await decide(a, true); toast('Approved & applied'); } catch (e) { toast(errMsg(e), true); } },
   async reject(d) { const a = S.approvals.find(x => x.id === d.id); const n = prompt('Reason for rejecting (optional):'); if (n === null) return; try { await decide(a, false, n); toast('Rejected'); } catch (e) { toast(errMsg(e), true); } },
   async vtoggle(d) { const v = S.vendors.find(x => x.id === d.id); try { await setDoc(doc(db, 'vendors', d.id), { active: v.active === false }, { merge: true }); } catch (e) { toast(errMsg(e), true); } },
-  async vrename(d) { const v = S.vendors.find(x => x.id === d.id); const n = prompt('Vendor name:', v.name); if (!n || !n.trim()) return; try { await setDoc(doc(db, 'vendors', d.id), { name: n.trim() }, { merge: true }); toast('Renamed (old entries keep the old name)'); } catch (e) { toast(errMsg(e), true); } },
+  vedit(d) {
+    const v = S.vendors.find(x => x.id === d.id); if (!v) return; const used = allTx().some(t => t.vendorId === v.id);
+    const m = modal(`<h3>Edit vendor</h3><form><label>Name<input name="name" required value="${esc(v.name)}"></label><div class="row2"><label>Group<select name="type" ${used ? 'disabled' : ''}>${ALL_TYPES.map(ty => `<option value="${ty}" ${v.type === ty ? 'selected' : ''}>${GROUPS[ty]}</option>`).join('')}</select></label><label>Status<select name="active"><option value="1" ${v.active !== false ? 'selected' : ''}>Active</option><option value="0" ${v.active === false ? 'selected' : ''}>Inactive</option></select></label></div><label>Phone<input name="phone" value="${esc(v.phone)}"></label><label>Note<input name="note" value="${esc(v.note)}"></label>${used ? '<div class="fn">Group is locked because this vendor already has entries. Old entries keep the old name if you rename.</div>' : ''}<button class="btn full">Save vendor</button></form>`);
+    $('form', m).onsubmit = async e => { e.preventDefault(); const f = e.target; try { await setDoc(doc(db, 'vendors', v.id), { name: f.name.value.trim(), type: used ? v.type : f.type.value, active: f.active.value === '1', phone: f.phone.value.trim(), note: f.note.value.trim() }, { merge: true }); toast('Vendor updated'); m.close(); } catch (err) { toast(errMsg(err), true); } };
+  },
   async vdel(d) {
     const v = S.vendors.find(x => x.id === d.id);
     if (allTx().some(t => t.vendorId === d.id)) return toast('This vendor has entries. Deactivate it instead.', true);
@@ -357,7 +363,7 @@ VIEWS.entry = (() => { let root;
   return {
     init(m) {
       root = m; const owner = role() === 'owner';
-      m.innerHTML = `<div class="card" style="margin:0">${formHtml({}, {})}</div><div class="today" id="live"></div>`;
+      m.innerHTML = `<div class="fn warn" id="hint" hidden></div><div class="card" style="margin:0">${formHtml({}, {})}</div><div class="today" id="live"></div>`;
       bindForm($('form', m), { types: allowedTypes(), onSubmit: async (d, f) => {
         if (d.dateKey !== keyOf()) throw new Error('Entries can only be made for today.');
         await createTx(d); toast('Saved'); f.elements.amount.value = ''; f.elements.commission.value = 0; f.elements.note.value = ''; f.dispatchEvent(new Event('input'));
@@ -365,6 +371,7 @@ VIEWS.entry = (() => { let root;
     },
     live() {
       if (!root) return; const f = $('form', root); if (f) syncForm(f, allowedTypes());
+      const h = $('#hint', root); if (h) { h.hidden = !(S.ready.vendors && !S.vendors.some(v => allowedTypes().includes(v.type) && v.active !== false)); h.textContent = 'No vendors yet. Ask the admin to add them under Vendors.'; }
       const act = allTx().filter(t => t.dateKey === keyOf() && allowedTypes().includes(t.vendorType) && t.status !== 'void');
       live(root).innerHTML = `Today: ${act.length} entries · In ${inr(sum(act.filter(t => t.dir === 'in'), t => t.amount))} · Out ${inr(sum(act.filter(t => t.dir === 'out'), t => t.amount))}`;
     }
@@ -501,7 +508,7 @@ VIEWS.vendors = (() => { let root;
       m.innerHTML = `<div class="card"><form class="row3"><label>New vendor<input name="name" required placeholder="Name"></label><label>Group<select name="type"><option value="small">Small</option><option value="main1">Main 1</option><option value="main2">Main 2</option></select></label><button class="btn">Add</button></form></div><div id="live"></div>`;
       $('form', m).addEventListener('submit', async e => { e.preventDefault(); const f = e.target; try { await addDoc(collection(db, 'vendors'), { name: f.name.value.trim(), type: f.type.value, active: true, createdAt: serverTimestamp() }); f.name.value = ''; toast('Vendor added'); } catch (err) { toast(errMsg(err), true); } });
     },
-    live() { if (root) live(root).innerHTML = ALL_TYPES.map(ty => `<div class="card"><div class="gh"><b>${GROUPS[ty]}</b></div>${S.vendors.filter(v => v.type === ty).sort(byName).map(v => `<div class="li"><div class="l"><b>${esc(v.name)}${v.active === false ? '<span class="tag r">inactive</span>' : ''}</b></div><div class="acts" style="margin:0"><button class="btn sec xs" data-act="vrename" data-id="${v.id}">Rename</button><button class="btn sec xs" data-act="vtoggle" data-id="${v.id}">${v.active === false ? 'Activate' : 'Deactivate'}</button><button class="btn red xs" data-act="vdel" data-id="${v.id}">✕</button></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">None</p>'}</div>`).join(''); }
+    live() { if (root) live(root).innerHTML = ALL_TYPES.map(ty => `<div class="card"><div class="gh"><b>${GROUPS[ty]}</b></div>${S.vendors.filter(v => v.type === ty).sort(byName).map(v => `<div class="li"><div class="l"><b>${esc(v.name)}${v.active === false ? '<span class="tag r">inactive</span>' : ''}</b>${v.phone || v.note ? `<small>${esc(v.phone || '')}${v.phone && v.note ? ' · ' : ''}${esc(v.note || '')}</small>` : ''}</div><div class="acts" style="margin:0"><button class="btn sec xs" data-act="vedit" data-id="${v.id}">Edit</button><button class="btn sec xs" data-act="vtoggle" data-id="${v.id}">${v.active === false ? 'Activate' : 'Deactivate'}</button><button class="btn red xs" data-act="vdel" data-id="${v.id}">✕</button></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">None</p>'}</div>`).join(''); }
   };
 })();
 
@@ -534,6 +541,28 @@ VIEWS.settings = (() => { let root, dirty = false;
   };
 })();
 
+/* --- Owner: corrections (backdated entries, edit, delete) --- */
+function openBackdated() {
+  const m = modal(`<h3>Backdated entry</h3>${formHtml({}, { dateEditable: true, submit: 'Save backdated entry' })}`);
+  const f = $('form', m); f.elements.date.value = addDays(keyToIso(keyOf()), -1);
+  bindForm(f, { types: ALL_TYPES, onSubmit: async d => { if (d.dateKey > keyOf()) throw new Error('Date cannot be in the future.'); await createTx(d, true); toast('Saved'); m.close(); } });
+}
+VIEWS.fix = (() => { let root; const F = () => S.f.fix ||= { from: addDays(keyToIso(keyOf()), -6), to: keyToIso(keyOf()), vendor: '' };
+  const rows = () => { const f = F(); const fk = f.from ? isoToKey(f.from) : 0, tk = f.to ? isoToKey(f.to) : 99999999; return sortTx(allTx().filter(t => t.dateKey >= fk && t.dateKey <= tk && (!f.vendor || t.vendorId === f.vendor))); };
+  return {
+    init(m) { root = m; const f = F();
+      m.innerHTML = `<div class="fn" style="margin-top:0">Fix or delete any entry, or add one for a past date. Every change is recorded in the Action log.</div>
+      <div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}"><button class="btn ic" data-add="1">+ Backdated</button></div>
+      <div class="bar"><select name="vendor" style="margin:0"></select></div><div id="live"></div>`;
+      VIEWS.fix.sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...[...S.vendors].sort(byName).map(v => [v.id, `${v.name} · ${SHORT[v.type]}`])]); $('[name=vendor]', m).value = f.vendor; };
+      VIEWS.fix.sync();
+      m.addEventListener('input', e => { const n = e.target.name; if (n && n in f) { f[n] = e.target.value; VIEWS.fix.live(); } });
+      m.addEventListener('click', e => { if (e.target.closest('[data-add]')) openBackdated(); });
+    },
+    live() { if (!root) return; const r = rows(); live(root).innerHTML = `<div class="card"><div class="gh"><b>${r.length} entries</b></div>${txList(r.slice(0, 200), { del: true })}</div>`; }
+  };
+})();
+
 /* --- combined tabs (keep the bottom bar at 5 items) --- */
 const combo = (subs, memo) => { let root, area, cur;
   const show = k => { cur = k; S.f[memo] = k; root.querySelectorAll('[data-sub]').forEach(b => b.classList.toggle('on', b.dataset.sub === k));
@@ -544,7 +573,7 @@ const combo = (subs, memo) => { let root, area, cur;
     live() { VIEWS[cur]?.live?.(); }
   };
 };
-VIEWS.review = combo([['approvals', 'Approvals'], ['log', 'Action log']], 'reviewSub');
+VIEWS.review = combo([['approvals', 'Approvals'], ['fix', 'Corrections'], ['log', 'Action log']], 'reviewSub');
 VIEWS.more = combo([['settings', 'Settings'], ['log', 'Action log']], 'moreSub');
 
 /* ================= shell / auth ================= */
@@ -576,7 +605,7 @@ let raf; function refresh() { cancelAnimationFrame(raf); raf = requestAnimationF
   document.querySelectorAll('nav .bd, #bd2').forEach(b => { b.textContent = n; b.hidden = !n; });
   if (S.tab && VIEWS[S.tab]) VIEWS[S.tab].live?.(); }); }
 
-function listen(q, key) { S.unsubs.push(onSnapshot(q, snap => { S[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); refresh(); }, err => toast('Cannot read ' + key + ': ' + err.message, true))); }
+function listen(q, key) { S.unsubs.push(onSnapshot(q, snap => { S[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); S.ready[key] = true; refresh(); }, err => toast('Cannot read ' + key + ': ' + err.message, true))); }
 function startSession() {
   const r = role();
   S.unsubs.push(onSnapshot(doc(db, 'settings', 'config'), s => { if (s.exists()) S.cfg = { banks: s.data().banks?.length ? s.data().banks : DEFAULT_BANKS, modes: s.data().modes?.length ? s.data().modes : DEFAULT_MODES }; refresh(); }));
@@ -590,7 +619,7 @@ function startSession() {
     if (r === 'admin') listen(collection(db, 'users'), 'users');
   }
 }
-function teardown() { S.unsubs.forEach(u => u()); Object.assign(S, { unsubs: [], vendors: [], small: [], main: [], approvals: [], logs: [], users: [], f: {}, tab: null }); }
+function teardown() { S.unsubs.forEach(u => u()); Object.assign(S, { unsubs: [], vendors: [], small: [], main: [], approvals: [], logs: [], users: [], f: {}, tab: null, ready: {} }); }
 
 onAuthStateChanged(auth, async u => {
   teardown();
