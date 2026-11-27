@@ -175,7 +175,7 @@ const S = { user: null, me: null, tab: null, vendors: [], cfg: { banks: DEFAULT_
 const allTx = () => [...S.small.map(t => ({ ...t, _col: 'tx_small' })), ...S.main.map(t => ({ ...t, _col: 'tx_main' }))];
 const sortTx = rows => rows.sort((a, b) => b.dateKey - a.dateKey || ms(b) - ms(a));
 const role = () => S.me.role;
-const allowedTypes = () => role() === 'accountant' ? ['small'] : role() === 'owner' ? ['main1', 'main2'] : [];
+const allowedTypes = () => role() === 'accountant' ? ['small'] : role() === 'owner' ? ALL_TYPES : [];
 const visibleTypes = () => role() === 'accountant' ? ['small'] : ALL_TYPES;
 const canDirect = t => role() !== 'accountant' || (t.dateKey === keyOf() && Date.now() < ms(t) + EDIT_WINDOW_MS);
 
@@ -247,6 +247,7 @@ function formHtml(t = {}, o = {}) {
   const v = (k, d = '') => esc(t[k] ?? d);
   return `<form autocomplete="off">
   <label>Vendor<select name="vendor" required></select></label>
+  ${o.group ? '<label data-small hidden>Small vendor<select name="smallVendor"></select></label>' : ''}
   <div class="seg dir"><label><input type="radio" name="dir" value="in" ${t.dir !== 'out' ? 'checked' : ''}><span>Entry (In)</span></label><label><input type="radio" name="dir" value="out" ${t.dir === 'out' ? 'checked' : ''}><span>Exit (Out)</span></label></div>
   <div class="seg"><label><input type="radio" name="mode" value="cash" ${t.mode !== 'online' ? 'checked' : ''}><span>Cash</span></label><label><input type="radio" name="mode" value="online" ${t.mode === 'online' ? 'checked' : ''}><span>Online</span></label></div>
   <div class="row2" data-online><label>Bank<select name="bank"></select></label><label>Mode<select name="payMode"></select></label></div>
@@ -261,13 +262,15 @@ function formHtml(t = {}, o = {}) {
 const fillSel = (sel, opts) => { const cur = sel.value; sel.innerHTML = opts.map(x => `<option value="${esc(x[0])}">${esc(x[1])}</option>`).join(''); if ([...sel.options].some(o => o.value === cur)) sel.value = cur; };
 function syncForm(f, types, curVendor) {
   const vs = S.vendors.filter(v => types.includes(v.type) && (v.active !== false || v.id === curVendor)).sort(byName);
-  const vo = vs.map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]);
+  const grp = !!f.elements.smallVendor;
+  const vo = vs.filter(v => !grp || v.type !== 'small').map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]);
+  if (grp) { vo.push(['__small', 'Small vendors ▸']); const sv = vs.filter(v => v.type === 'small').map(v => [v.id, v.name]); fillSel(f.elements.smallVendor, sv.length ? sv : [['', 'No small vendors yet']]); }
   fillSel(f.elements.vendor, vo.length ? vo : [['', 'No vendors yet – ask admin to add']]);
   fillSel(f.elements.bank, S.cfg.banks.map(b => [b, b]));
   fillSel(f.elements.payMode, S.cfg.modes.map(b => [b, b]));
 }
 function readForm(f) {
-  const g = n => f.elements[n].value; const v = S.vendors.find(x => x.id === g('vendor'));
+  const g = n => f.elements[n].value; const v = S.vendors.find(x => x.id === (g('vendor') === '__small' ? g('smallVendor') : g('vendor')));
   if (!v) throw new Error('Choose a vendor (ask admin to add vendors first).');
   const mode = g('mode'); const amount = r2(parseFloat(g('amount'))); const commission = r2(parseFloat(g('commission')) || 0);
   if (!(amount > 0)) throw new Error('Enter a valid amount.');
@@ -276,7 +279,7 @@ function readForm(f) {
 function bindForm(f, { types, t, onSubmit }) {
   syncForm(f, types, t?.vendorId);
   if (t) { f.elements.vendor.value = t.vendorId; f.elements.bank.value = t.bank || f.elements.bank.value; f.elements.payMode.value = t.payMode || f.elements.payMode.value; f.elements.commType.value = t.commType === 'given' ? 'given' : 'taken'; }
-  const tog = () => { f.querySelector('[data-online]').hidden = f.elements.mode.value !== 'online';  };
+  const tog = () => { f.querySelector('[data-online]').hidden = f.elements.mode.value !== 'online'; const sm = f.querySelector('[data-small]'); if (sm) sm.hidden = f.elements.vendor.value !== '__small';  };
   f.addEventListener('input', tog); tog();
   f.addEventListener('submit', async e => {
     e.preventDefault(); const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
@@ -363,7 +366,7 @@ VIEWS.entry = (() => { let root;
   return {
     init(m) {
       root = m; const owner = role() === 'owner';
-      m.innerHTML = `<div class="fn warn" id="hint" hidden></div><div class="card" style="margin:0">${formHtml({}, {})}</div><div class="today" id="live"></div>`;
+      m.innerHTML = `<div class="fn warn" id="hint" hidden></div><div class="card" style="margin:0">${formHtml({}, { group: owner })}</div><div class="today" id="live"></div>`;
       bindForm($('form', m), { types: allowedTypes(), onSubmit: async (d, f) => {
         if (d.dateKey !== keyOf()) throw new Error('Entries can only be made for today.');
         await createTx(d); toast('Saved'); f.elements.amount.value = ''; f.elements.commission.value = 0; f.elements.note.value = ''; f.dispatchEvent(new Event('input'));
