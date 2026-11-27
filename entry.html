@@ -292,7 +292,7 @@ function txList(rows, o = {}) {
   if (!rows.length) return '<p class="muted" style="padding:4px 2px;margin:0">No entries.</p>';
   const act = o.act !== false && role() !== 'admin';
   return rows.map(t => `<div class="li ${t.status === 'void' ? 'void' : ''}"><div class="l">
-    <b>${esc(t.vendorName)}${t.editCount ? '<span class="tag">edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</b>
+    <b>${esc(t.vendorName)}${t.kind === 'opening' ? '<span class="tag g">opening</span>' : ''}${t.editCount ? '<span class="tag">edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</b>
     <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.mode === 'cash' ? 'Cash' : esc(t.bank) + '/' + esc(t.payMode)}${t.note ? ' · ' + esc(t.note) : ''}</small>
     ${act ? `<div class="acts"><button class="btn sec xs" data-act="edit" data-col="${t._col}" data-id="${t.id}">${canDirect(t) ? 'Edit' : 'Edit*'}</button><button class="btn sec xs" data-act="void" data-col="${t._col}" data-id="${t.id}">${t.status === 'void' ? 'Restore' : 'Void'}</button>${o.del && role() === 'owner' ? `<button class="btn red xs" data-act="del" data-col="${t._col}" data-id="${t.id}">Delete</button>` : ''}</div>` : ''}</div>
     <div class="r"><b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>${t.commission ? `<small>comm ${inr(t.commission)} ${t.commType}</small>` : ''}</div></div>`).join('') + (o.note || '');
@@ -544,6 +544,38 @@ VIEWS.settings = (() => { let root, dirty = false;
   };
 })();
 
+/* --- Owner: opening balances (previous day's tally per vendor) --- */
+VIEWS.opening = (() => { let root, dirty = false;
+  const st = () => S.f.open ||= { d: addDays(keyToIso(keyOf()), -1) };
+  const existing = (vid, k) => allTx().find(t => t.kind === 'opening' && t.vendorId === vid && t.dateKey === k && t.status !== 'void');
+  const render = () => {
+    const k = isoToKey(st().d); const vs = S.vendors.filter(v => v.active !== false).sort(byName);
+    live(root).innerHTML = ALL_TYPES.map(ty => { const g = vs.filter(v => v.type === ty); if (!g.length) return '';
+      return `<div class="card"><div class="gh"><b>${GROUPS[ty]}</b></div>${g.map(v => { const ex = existing(v.id, k);
+        return `<div class="li" style="align-items:center"><div class="l"><b>${esc(v.name)}</b></div><div style="display:flex;gap:6px"><select data-d="${v.id}" style="width:72px;margin:0"><option value="in" ${!ex || ex.dir === 'in' ? 'selected' : ''}>In</option><option value="out" ${ex && ex.dir === 'out' ? 'selected' : ''}>Out</option></select><input data-a="${v.id}" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0" value="${ex ? ex.amount : ''}" style="width:104px;margin:0"></div></div>`; }).join('')}</div>`; }).join('') || '<p class="muted">Add vendors first (admin → Vendors).</p>';
+  };
+  const save = async () => {
+    const k = isoToKey(st().d); if (!st().d || k >= keyOf()) throw new Error('Pick a date before today.'); let n = 0;
+    for (const v of S.vendors.filter(v => v.active !== false)) {
+      const a = r2(parseFloat($(`[data-a="${v.id}"]`, root)?.value) || 0), dir = $(`[data-d="${v.id}"]`, root)?.value || 'in', ex = existing(v.id, k);
+      if (ex) { if (a <= 0) { await changeTx(ex, { status: 'void' }, 'void'); n++; } else if (a !== ex.amount || dir !== ex.dir) { await changeTx(ex, { amount: a, dir }, 'edit'); n++; } }
+      else if (a > 0) { await createTx({ vendorId: v.id, vendorName: v.name, vendorType: v.type, dir, mode: 'cash', bank: '', payMode: '', amount: a, commission: 0, commType: 'none', note: 'Opening balance', dateKey: k, kind: 'opening' }, true); n++; }
+    }
+    if (!n) throw new Error('Nothing to save.');
+  };
+  return {
+    init(m) { root = m; dirty = false; const f = st();
+      m.innerHTML = `<div class="fn" style="margin-top:0">Enter the balance each vendor was left with at the end of that day. It carries into the next day's Opening balance. <b>In</b> = net received, <b>Out</b> = net paid. Leave blank for none. Amounts add to anything already recorded for earlier days, so use this mainly when starting out.</div>
+      <div class="bar"><input type="date" name="d" value="${f.d}" max="${addDays(keyToIso(keyOf()), -1)}"><button class="btn ic" data-save="1">Save</button></div><div id="live"></div>`;
+      m.addEventListener('input', e => { if (e.target.name === 'd') { if (e.target.value) { f.d = e.target.value; dirty = false; render(); } } else dirty = true; });
+      m.addEventListener('click', async e => { const b = e.target.closest('[data-save]'); if (!b) return; b.disabled = true;
+        try { await save(); toast('Saved'); dirty = false; render(); } catch (err) { toast(errMsg(err), true); } finally { b.disabled = false; } });
+      render();
+    },
+    live() { if (root && !dirty) render(); }
+  };
+})();
+
 /* --- Owner: corrections (backdated entries, edit, delete) --- */
 function openBackdated() {
   const m = modal(`<h3>Backdated entry</h3>${formHtml({}, { dateEditable: true, submit: 'Save backdated entry' })}`);
@@ -577,13 +609,14 @@ const combo = (subs, memo) => { let root, area, cur;
   };
 };
 VIEWS.review = combo([['approvals', 'Approvals'], ['fix', 'Corrections'], ['log', 'Action log']], 'reviewSub');
+VIEWS.balances = combo([['ledger', 'Tally'], ['opening', 'Opening balances']], 'balSub');
 VIEWS.more = combo([['settings', 'Settings'], ['log', 'Action log']], 'moreSub');
 
 /* ================= shell / auth ================= */
 const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase().replace(/\s+/g, '') + '@ledger.local'; };
 const TABS = {
   accountant: [['entry', 'Entry', 'entry'], ['ledger', 'Balances', 'ledger'], ['tx', 'History', 'clock'], ['requests', 'My edits', 'edits']],
-  owner: [['entry', 'Add entry', 'entry'], ['ledger', 'Balances', 'ledger'], ['dash', 'Dashboard', 'dash'], ['tx', 'Transactions', 'tx'], ['review', 'Review', 'review']],
+  owner: [['entry', 'Add entry', 'entry'], ['balances', 'Balances', 'ledger'], ['dash', 'Dashboard', 'dash'], ['tx', 'Transactions', 'tx'], ['review', 'Review', 'review']],
   admin: [['ledger', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'More', 'more']]
 };
 
