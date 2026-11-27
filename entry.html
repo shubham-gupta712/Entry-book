@@ -85,6 +85,10 @@ input[readonly]{background:#f1f3f5;color:var(--mut)}
 .login{max-width:380px;margin:12vh auto;padding:0 14px}
 .diff{font-size:12.5px;margin:3px 0}
 .fn{font-size:11px;color:var(--mut);margin:2px 2px 8px}
+.bal{border-radius:12px;padding:10px 14px;margin:0 0 8px;font-weight:800;font-size:22px;letter-spacing:-.3px;display:flex;justify-content:space-between;align-items:center}.bal small{font-size:11px;font-weight:600;opacity:.8;letter-spacing:0}
+.bal.pos{background:#dcfce7;color:var(--in)}.bal.neg{background:#fee2e2;color:var(--out)}.bal.zero{background:#eef1f4;color:var(--mut)}
+.vt{padding:0!important;background:none!important;margin:-2px 0 8px!important}.vt .bal{margin:0;font-size:20px;padding:8px 14px}
+.pos{color:var(--in)}.neg{color:var(--out)}
 .vt{font-size:12.5px;background:#eef4f3;border-radius:8px;padding:6px 10px;margin:-2px 0 8px;color:var(--mut)}.vt:empty{display:none}
 .row3{display:grid;grid-template-columns:1fr 112px auto;gap:6px;align-items:end}
 .row3 label{margin:0}
@@ -114,7 +118,8 @@ const firebaseConfig = {
 const TZ = 'Asia/Kolkata';
 const EDIT_WINDOW_MS = 5 * 3600e3; // must match the 5 hours in firestore.rules
 const GROUPS = { small: 'Small vendors', main1: 'Main vendor 1', main2: 'Main vendor 2' };
-const SHORT = { small: 'Small vendors', main1: 'Main 1', main2: 'Main 2' };
+const DEFAULT_GROUPS = { ...GROUPS };
+const SHORT = { ...GROUPS };
 const ALL_TYPES = ['small', 'main1', 'main2'];
 const DEFAULT_BANKS = ['HDFC', 'SBI', 'ICICI', 'Axis', 'Kotak', 'PNB', 'Other'];
 const DEFAULT_MODES = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Card'];
@@ -188,7 +193,8 @@ const XLABEL = { commission: 'Commission', charge: 'Charge', earning: 'Earning' 
 const effect = t => t.status === 'void' ? 0 : (t.dir === 'out' ? t.amount : -t.amount) + (xt(t) === 'earning' ? t.commission : xt(t) === 'commission' ? -t.commission : 0);
 const vendorBalance = vid => r2(allTx().filter(t => t.vendorId === vid).reduce((s, t) => s + effect(t), 0));
 const signed = n => (n < 0 ? '−' : '') + inr(Math.abs(n));
-const tallyHtml = b => b > 0 ? `Tally <b class="warn">${inr(b)}</b> · vendor owes owner` : b < 0 ? `Tally <b class="out">${signed(b)}</b> · owner owes vendor` : 'Tally <b>₹0</b> · settled';
+const balCls = b => b > 0 ? 'pos' : b < 0 ? 'neg' : 'zero';
+const tallyHtml = b => `<div class="bal ${balCls(b)}">${b < 0 ? '−' + inr(-b) : inr(b)}</div>`;
 const NK = ['open', 'snd', 'rcv', 'com', 'ern', 'chg', 'close'];
 function ledgerFor(txs, key, types) {
   const map = {};
@@ -255,8 +261,8 @@ function formHtml(t = {}, o = {}) {
   <label>Vendor<select name="vendor" required></select></label>
   ${o.group ? '<label data-small hidden>Small vendor<select name="smallVendor"></select></label>' : ''}
   <div class="vt" data-tally></div>
-  <div class="seg dir"><label><input type="radio" name="dir" value="out" ${t.dir !== 'in' ? 'checked' : ''}><span>Send</span></label><label><input type="radio" name="dir" value="in" ${t.dir === 'in' ? 'checked' : ''}><span>Receive</span></label></div>
-  <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${v('amount')}"></label>
+  <div class="seg dir" data-dir><label><input type="radio" name="dir" value="out" ${t.dir !== 'in' ? 'checked' : ''}><span>Send</span></label><label><input type="radio" name="dir" value="in" ${t.dir === 'in' ? 'checked' : ''}><span>Receive</span></label></div>
+  <label data-amt>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${v('amount')}"></label>
   <div class="row2" data-xrow><label>Add<select name="commType"><option value="none">None</option><option value="commission">Commission</option><option value="charge">Charge</option><option value="earning">Earning</option></select></label>
   <label data-xamt hidden>Amount (₹)<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${t.commission ? esc(t.commission) : ''}"></label></div>
   <div class="fn" data-xhelp hidden></div>
@@ -276,10 +282,10 @@ function syncForm(f, types, curVendor) {
 function readForm(f) {
   const g = n => f.elements[n]?.value ?? ''; const vid = g('vendor') === '__small' ? g('smallVendor') : g('vendor'); const v = S.vendors.find(x => x.id === vid);
   if (!v) throw new Error('Choose a vendor (ask admin to add vendors first).');
-  const amount = r2(parseFloat(g('amount')) || 0); const ct = g('commType'); const extra = ct === 'none' ? 0 : r2(parseFloat(g('commission')) || 0);
+  const ct = g('commType'); const amount = ct === 'none' ? r2(parseFloat(g('amount')) || 0) : 0; const extra = ct === 'none' ? 0 : r2(parseFloat(g('commission')) || 0);
   if (ct !== 'none' && !(extra > 0)) throw new Error('Enter the ' + XLABEL[ct].toLowerCase() + ' amount.');
   if (!(amount > 0) && !(extra > 0)) throw new Error('Enter an amount.');
-  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: g('dir'), mode: 'cash', bank: '', payMode: '', amount, commission: extra, commType: ct, note: g('note').trim(), dateKey: isoToKey(g('date')), reason: g('reason').trim() };
+  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: ct === 'none' ? g('dir') : 'out', mode: 'cash', bank: '', payMode: '', amount, commission: extra, commType: ct, note: g('note').trim(), dateKey: isoToKey(g('date')), reason: g('reason').trim() };
 }
 function bindForm(f, { types, t, onSubmit }) {
   syncForm(f, types, t?.vendorId);
@@ -287,7 +293,7 @@ function bindForm(f, { types, t, onSubmit }) {
   const HELP = { commission: 'Credited to the vendor: lowers the vendor tally.', charge: 'Your cost for this vendor. Not part of any tally.', earning: 'Taken from the vendor: raises the vendor tally.' };
   const tog = () => {
     const sm = f.querySelector('[data-small]'); if (sm) sm.hidden = f.elements.vendor.value !== '__small';
-    const x = f.elements.commType.value; f.querySelector('[data-xamt]').hidden = x === 'none'; f.querySelector('[data-xrow]').style.gridTemplateColumns = x === 'none' ? '1fr' : '1fr 1fr';
+    const x = f.elements.commType.value; f.querySelector('[data-dir]').hidden = x !== 'none'; f.querySelector('[data-amt]').hidden = x !== 'none'; f.querySelector('[data-xamt]').hidden = x === 'none'; f.querySelector('[data-xrow]').style.gridTemplateColumns = x === 'none' ? '1fr' : '1fr 1fr';
     const h = f.querySelector('[data-xhelp]'); h.hidden = x === 'none'; h.textContent = HELP[x] || '';
     const vid = f.elements.vendor.value === '__small' ? f.elements.smallVendor?.value : f.elements.vendor.value;
     const el = f.querySelector('[data-tally]'); if (el) el.innerHTML = vid ? tallyHtml(vendorBalance(vid)) : '';
@@ -305,9 +311,9 @@ function txList(rows, o = {}) {
   const act = o.act !== false && role() !== 'admin';
   return rows.map(t => { const x = xt(t); return `<div class="li ${t.status === 'void' ? 'void' : ''}"><div class="l">
     <b>${esc(t.vendorName)}${t.kind === 'opening' ? '<span class="tag g">opening</span>' : ''}${t.editCount ? '<span class="tag">edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</b>
-    <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.dir === 'in' ? 'Receive' : 'Send'}${t.note ? ' · ' + esc(t.note) : ''}</small>
+    <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.amount > 0 ? (t.dir === 'in' ? 'Receive' : 'Send') : (XLABEL[x] || 'Entry')}${t.note ? ' · ' + esc(t.note) : ''}</small>
     ${act ? `<div class="acts"><button class="btn sec xs" data-act="edit" data-col="${t._col}" data-id="${t.id}">${canDirect(t) ? 'Edit' : 'Edit*'}</button><button class="btn sec xs" data-act="void" data-col="${t._col}" data-id="${t.id}">${t.status === 'void' ? 'Restore' : 'Void'}</button>${o.del && role() === 'owner' ? `<button class="btn red xs" data-act="del" data-col="${t._col}" data-id="${t.id}">Delete</button>` : ''}</div>` : ''}</div>
-    <div class="r">${t.amount > 0 ? `<b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>` : ''}${x !== 'none' && t.commission ? `<small>${XLABEL[x]} ${inr(t.commission)}</small>` : ''}</div></div>`; }).join('') + (o.note || '');
+    <div class="r">${t.amount > 0 ? `<b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>` : ''}${x !== 'none' && t.commission ? (t.amount > 0 ? `<small>${XLABEL[x]} ${inr(t.commission)}</small>` : `<b>${XLABEL[x]} ${inr(t.commission)}</b>`) : ''}</div></div>`; }).join('') + (o.note || '');
 }
 const findTx = (col, id) => allTx().find(x => x._col === col && x.id === id);
 
@@ -405,8 +411,8 @@ VIEWS.ledger = (() => { let root;
     },
     live() {
       if (!root) return; const { groups, T } = ledgerCalc(isoToKey(S.f.ledger.d), visibleTypes());
-      live(root).innerHTML = kpi([['Opening', signed(T.open)], ['Sent', inr(T.snd), 'out'], ['Received', inr(T.rcv), 'in'], [T.bal ? 'Closing ✓' : 'Carry-fwd', signed(T.close), T.bal ? 'in' : 'warn']])
-        + groups.map(g => `<div class="card"><div class="gh"><b>${GROUPS[g.ty]}</b><b class="${g.close ? 'warn' : 'muted'}">${signed(g.close)}</b></div>${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · Sent ${num(r.snd)} · Recv ${num(r.rcv)}${r.com ? ' · Comm ' + num(r.com) : ''}${r.ern ? ' · Earn ' + num(r.ern) : ''}${r.chg ? ' · Charge ' + num(r.chg) : ''}</small></div><div class="r"><b class="${r.close > 0 ? 'warn' : r.close < 0 ? 'out' : ''}">${signed(r.close)}</b><small>${r.close > 0 ? 'owes owner' : r.close < 0 ? 'owner owes' : 'settled'}</small></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
+      live(root).innerHTML = kpi([['Opening', signed(T.open)], ['Sent', inr(T.snd), 'out'], ['Received', inr(T.rcv), 'in'], ['Closing', signed(T.close), T.close > 0 ? 'in' : T.close < 0 ? 'out' : '']])
+        + groups.map(g => `<div class="card"><div class="gh"><b>${GROUPS[g.ty]}</b><b class="${g.close > 0 ? 'pos' : g.close < 0 ? 'neg' : 'muted'}">${signed(g.close)}</b></div>${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · Sent ${num(r.snd)} · Recv ${num(r.rcv)}${r.com ? ' · Comm ' + num(r.com) : ''}${r.ern ? ' · Earn ' + num(r.ern) : ''}${r.chg ? ' · Charge ' + num(r.chg) : ''}</small></div><div class="r"><b class="${r.close > 0 ? 'pos' : r.close < 0 ? 'neg' : ''}">${signed(r.close)}</b></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
         + '<div class="fn">Tally = what the vendor owes the owner (+) or the owner owes the vendor (−). Send adds, Receive reduces, Commission reduces, Earning adds. Charges are not in the tally. All vendors together should close at ₹0; leftovers carry to the next day.</div>';
     }
   };
@@ -415,16 +421,20 @@ VIEWS.ledger = (() => { let root;
 /* --- Owner dashboard (third screen) --- */
 VIEWS.dash = (() => { let root;
   return {
-    init(m) { root = m; m.innerHTML = '<div id="live"></div>'; },
+    init(m) { root = m; const f = S.f.dash ||= { d: keyToIso(keyOf()) };
+      m.innerHTML = `<div class="bar"><input type="date" name="d" value="${f.d}" max="${keyToIso(keyOf())}"><button class="btn sec ic" data-n="-1">‹</button><button class="btn sec ic" data-n="1">›</button></div><div id="live"></div>`;
+      m.addEventListener('input', e => { if (e.target.name === 'd' && e.target.value) { f.d = e.target.value; VIEWS.dash.live(); } });
+      m.addEventListener('click', e => { const b = e.target.closest('[data-n]'); if (b) { f.d = addDays(f.d, +b.dataset.n); $('[name=d]', m).value = f.d; VIEWS.dash.live(); } });
+    },
     live() {
-      if (!root) return; const key = keyOf(); const { groups, T } = ledgerCalc(key, ALL_TYPES);
+      if (!root) return; const key = isoToKey(S.f.dash.d); const { groups, T } = ledgerCalc(key, ALL_TYPES);
       const day = allTx().filter(t => t.dateKey === key && t.status !== 'void');
       const pend = S.approvals.filter(a => a.status === 'pending').length;
       const xs = k => inr(sum(day.filter(t => xt(t) === k), t => t.commission));
-      live(root).innerHTML = `<div class="banner ${T.bal ? 'ok' : 'wn'}">${T.bal ? '✓ Tally balanced' : '⚠ Carry-forward ' + signed(T.close)}<span>${keyToStr(key)}</span></div>
-      <div class="tiles">${groups.map(g => `<div class="tile"><small>${SHORT[g.ty]}</small><b class="${g.close ? 'warn' : ''}">${signed(g.close)}</b><small>Sent ${num(g.snd)} · Recv ${num(g.rcv)}</small></div>`).join('')}</div>
+      live(root).innerHTML = `<div class="bal ${balCls(T.close)}"><small>Current balance</small><span>${T.close < 0 ? '−' + inr(-T.close) : inr(T.close)}</span></div>
+      <div class="tiles">${groups.map(g => `<div class="tile"><small>${SHORT[g.ty]}</small><b class="${g.close > 0 ? 'pos' : g.close < 0 ? 'neg' : ''}">${signed(g.close)}</b><small>Sent ${num(g.snd)} · Recv ${num(g.rcv)}</small></div>`).join('')}</div>
       ${kpi([['Earning', xs('earning'), 'in'], ['Commission', xs('commission')], ['Charges', xs('charge'), 'out'], ['Pending', pend, pend ? 'warn' : '', 'data-act="go" data-tab="review"']])}
-      <div class="card"><div class="gh"><b>Latest entries</b></div>${txList(sortTx(day).slice(0, 6), { act: false })}</div>`;
+      <div class="card"><div class="gh"><b>Entries · ${keyToStr(key)}</b></div>${txList(sortTx(day).slice(0, 6), { act: false })}</div>`;
     }
   };
 })();
@@ -497,7 +507,7 @@ VIEWS.requests = (() => { let root;
 /* --- Action log --- */
 function describeLog(l) {
   const b = l.before || {}, a = l.after || {};
-  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.dir === 'in' ? 'RECEIVE' : 'SEND'} ${inr(x.amount)}${x.commission ? ' · ' + (XLABEL[xt(x)] || 'extra') + ' ' + inr(x.commission) : ''}`; }
+  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.amount > 0 ? (x.dir === 'in' ? 'RECEIVE ' : 'SEND ') + inr(x.amount) : ''}${x.commission ? (x.amount > 0 ? ' · ' : '') + (XLABEL[xt(x)] || 'extra').toUpperCase() + ' ' + inr(x.commission) : ''}`; }
   return diffHtml(b, a) + (l.reason ? `<div class="muted">${esc(l.reason)}</div>` : '');
 }
 VIEWS.log = (() => { let root;
@@ -545,12 +555,12 @@ VIEWS.users = (() => { let root;
 VIEWS.settings = (() => { let root, dirty = false;
   return {
     init(m) { root = m; dirty = false;
-      m.innerHTML = `<div class="card"><div class="row2"><label>Banks (one per line)<textarea name="banks" rows="9"></textarea></label><label>Online modes (one per line)<textarea name="modes" rows="9"></textarea></label></div><button class="btn full" id="sv">Save</button><div class="fn" style="margin-top:6px">The 5-hour edit window is set inside firestore.rules.</div></div>`;
+      m.innerHTML = `<div class="card"><div class="gh"><b>Vendor category names</b></div>${ALL_TYPES.map(k => `<label>${k === 'small' ? 'Category 1 (small vendors)' : k === 'main1' ? 'Category 2' : 'Category 3'}<input name="${k}" maxlength="30"></label>`).join('')}<button class="btn full" id="sv">Save names</button><div class="fn" style="margin-top:6px">Only the display name changes; existing vendors and entries stay in place.</div></div>`;
       m.addEventListener('input', () => dirty = true);
-      $('#sv', m).onclick = async () => { const l = n => $(`[name=${n}]`, m).value.split('\n').map(x => x.trim()).filter(Boolean); try { await setDoc(doc(db, 'settings', 'config'), { banks: l('banks'), modes: l('modes') }); dirty = false; toast('Saved'); } catch (e) { toast(errMsg(e), true); } };
+      $('#sv', m).onclick = async () => { const groups = {}; ALL_TYPES.forEach(k => groups[k] = $(`[name=${k}]`, m).value.trim() || DEFAULT_GROUPS[k]); try { await setDoc(doc(db, 'settings', 'config'), { groups }, { merge: true }); dirty = false; toast('Saved'); } catch (e) { toast(errMsg(e), true); } };
       this.live();
     },
-    live() { if (root && !dirty) { $('[name=banks]', root).value = S.cfg.banks.join('\n'); $('[name=modes]', root).value = S.cfg.modes.join('\n'); } }
+    live() { if (root && !dirty) ALL_TYPES.forEach(k => $(`[name=${k}]`, root).value = GROUPS[k]); }
   };
 })();
 
@@ -643,14 +653,14 @@ const combo = (subs, memo) => { let root, area, cur;
 };
 VIEWS.review = combo([['approvals', 'Approvals'], ['fix', 'Corrections'], ['log', 'Action log']], 'reviewSub');
 VIEWS.balances = { init(m) { const subs = role() === 'owner' ? [['ledger', 'Tally'], ['opening', 'Opening'], ['charges', 'Charges']] : [['ledger', 'Tally'], ['charges', 'Charges']]; this.c = combo(subs, 'balSub'); this.c.init(m); }, live() { this.c?.live(); } };
-VIEWS.more = VIEWS.log;
+VIEWS.more = combo([['settings', 'Categories'], ['log', 'Action log']], 'moreSub');
 
 /* ================= shell / auth ================= */
 const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase().replace(/\s+/g, '') + '@ledger.local'; };
 const TABS = {
   accountant: [['entry', 'Entry', 'entry'], ['balances', 'Balances', 'ledger'], ['tx', 'History', 'clock'], ['requests', 'My edits', 'edits']],
   owner: [['entry', 'Add entry', 'entry'], ['balances', 'Balances', 'ledger'], ['dash', 'Dashboard', 'dash'], ['tx', 'Transactions', 'tx'], ['review', 'Review', 'review']],
-  admin: [['balances', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'Action log', 'review']]
+  admin: [['balances', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'More', 'review']]
 };
 
 function showLogin() {
@@ -677,7 +687,7 @@ let raf; function refresh() { cancelAnimationFrame(raf); raf = requestAnimationF
 function listen(q, key) { S.unsubs.push(onSnapshot(q, snap => { S[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); S.ready[key] = true; refresh(); }, err => toast('Cannot read ' + key + ': ' + err.message, true))); }
 function startSession() {
   const r = role();
-  S.unsubs.push(onSnapshot(doc(db, 'settings', 'config'), s => { if (s.exists()) S.cfg = { banks: s.data().banks?.length ? s.data().banks : DEFAULT_BANKS, modes: s.data().modes?.length ? s.data().modes : DEFAULT_MODES }; refresh(); }));
+  S.unsubs.push(onSnapshot(doc(db, 'settings', 'config'), s => { const g = s.exists() ? s.data().groups || {} : {}; ALL_TYPES.forEach(k => { GROUPS[k] = SHORT[k] = (g[k] || DEFAULT_GROUPS[k]); }); refresh(); }));
   if (r === 'accountant') {
     listen(query(collection(db, 'vendors'), where('type', '==', 'small')), 'vendors');
     listen(collection(db, 'tx_small'), 'small');
