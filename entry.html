@@ -85,6 +85,7 @@ input[readonly]{background:#f1f3f5;color:var(--mut)}
 .login{max-width:380px;margin:12vh auto;padding:0 14px}
 .diff{font-size:12.5px;margin:3px 0}
 .fn{font-size:11px;color:var(--mut);margin:2px 2px 8px}
+.vt{font-size:12.5px;background:#eef4f3;border-radius:8px;padding:6px 10px;margin:-2px 0 8px;color:var(--mut)}.vt:empty{display:none}
 .row3{display:grid;grid-template-columns:1fr 112px auto;gap:6px;align-items:end}
 .row3 label{margin:0}
 </style>
@@ -117,7 +118,7 @@ const SHORT = { small: 'Small vendors', main1: 'Main 1', main2: 'Main 2' };
 const ALL_TYPES = ['small', 'main1', 'main2'];
 const DEFAULT_BANKS = ['HDFC', 'SBI', 'ICICI', 'Axis', 'Kotak', 'PNB', 'Other'];
 const DEFAULT_MODES = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Card'];
-const LABEL = { vendorName: 'Vendor', dir: 'Direction', mode: 'Mode', bank: 'Bank', payMode: 'Pay mode', amount: 'Amount', commission: 'Commission', commType: 'Comm. type', note: 'Note', dateKey: 'Date', status: 'Status' };
+const LABEL = { vendorName: 'Vendor', dir: 'Type', mode: 'Mode', bank: 'Bank', payMode: 'Pay mode', amount: 'Amount', commission: 'Extra amount', commType: 'Extra', note: 'Note', dateKey: 'Date', status: 'Status' };
 const FIELDS = ['vendorId', 'vendorName', 'vendorType', 'dir', 'mode', 'bank', 'payMode', 'amount', 'commission', 'commType', 'note', 'dateKey'];
 
 const ICON = {
@@ -180,30 +181,34 @@ const visibleTypes = () => role() === 'accountant' ? ['small'] : ALL_TYPES;
 const canDirect = t => role() !== 'accountant' || (t.dateKey === keyOf() && Date.now() < ms(t) + EDIT_WINDOW_MS);
 
 /* ---------- ledger maths ---------- */
-// Net = In - Out. Per vendor: opening (carried forward) + today's net = closing (carried to next day).
+// Tally per vendor = what the vendor owes the owner (+) or the owner owes the vendor (−).
+// Send adds, Receive reduces, Commission reduces (credited to the vendor), Earning adds. Charges are NOT in the tally.
+const xt = t => t.commType === 'given' ? 'commission' : t.commType === 'taken' ? 'earning' : (t.commType || 'none');
+const XLABEL = { commission: 'Commission', charge: 'Charge', earning: 'Earning' };
+const effect = t => t.status === 'void' ? 0 : (t.dir === 'out' ? t.amount : -t.amount) + (xt(t) === 'earning' ? t.commission : xt(t) === 'commission' ? -t.commission : 0);
+const vendorBalance = vid => r2(allTx().filter(t => t.vendorId === vid).reduce((s, t) => s + effect(t), 0));
+const signed = n => (n < 0 ? '−' : '') + inr(Math.abs(n));
+const tallyHtml = b => b > 0 ? `Tally <b class="warn">${inr(b)}</b> · vendor owes owner` : b < 0 ? `Tally <b class="out">${signed(b)}</b> · owner owes vendor` : 'Tally <b>₹0</b> · settled';
+const NK = ['open', 'snd', 'rcv', 'com', 'ern', 'chg', 'close'];
 function ledgerFor(txs, key, types) {
   const map = {};
-  const get = (id, name, type) => map[id] || (map[id] = { id, name, type, open: 0, in: 0, out: 0, given: 0, taken: 0 });
+  const get = (id, name, type) => map[id] || (map[id] = { id, name, type, open: 0, snd: 0, rcv: 0, com: 0, ern: 0, chg: 0 });
   S.vendors.forEach(v => { if (types.includes(v.type) && v.active !== false) get(v.id, v.name, v.type); });
   for (const t of txs) {
     if (t.status === 'void' || !types.includes(t.vendorType) || t.dateKey > key) continue;
     const r = get(t.vendorId, t.vendorName, t.vendorType);
-    if (t.dateKey < key) r.open += t.dir === 'in' ? t.amount : -t.amount;
-    else {
-      if (t.dir === 'in') r.in += t.amount; else r.out += t.amount;
-      if (t.commType === 'given') r.given += t.commission;
-      if (t.commType === 'taken') r.taken += t.commission;
-    }
+    if (t.dateKey < key) r.open += effect(t);
+    else { if (t.dir === 'out') r.snd += t.amount; else r.rcv += t.amount; const x = xt(t); if (x === 'commission') r.com += t.commission; if (x === 'earning') r.ern += t.commission; if (x === 'charge') r.chg += t.commission; }
   }
-  return Object.values(map).map(r => ({ ...r, open: r2(r.open), in: r2(r.in), out: r2(r.out), given: r2(r.given), taken: r2(r.taken), close: r2(r.open + r.in - r.out) }));
+  return Object.values(map).map(r => { const o = { ...r }; NK.forEach(k => o[k] = r2(r[k] || 0)); o.close = r2(o.open + o.snd - o.rcv - o.com + o.ern); return o; });
 }
 function ledgerCalc(key, types) {
   const rows = ledgerFor(allTx(), key, types);
   const groups = types.map(ty => {
-    const rs = rows.filter(r => r.type === ty && (r.open || r.in || r.out || r.close || r.given || r.taken)).sort(byName);
-    return { ty, rs, open: sum(rs, r => r.open), in: sum(rs, r => r.in), out: sum(rs, r => r.out), given: sum(rs, r => r.given), taken: sum(rs, r => r.taken), close: sum(rs, r => r.close) };
+    const rs = rows.filter(r => r.type === ty && (r.open || r.snd || r.rcv || r.com || r.ern || r.chg || r.close)).sort(byName);
+    const g = { ty, rs }; NK.forEach(k => g[k] = sum(rs, r => r[k])); return g;
   });
-  const T = { open: sum(groups, x => x.open), in: sum(groups, x => x.in), out: sum(groups, x => x.out), close: sum(groups, x => x.close), given: sum(groups, x => x.given), taken: sum(groups, x => x.taken) };
+  const T = {}; NK.forEach(k => T[k] = sum(groups, x => x[k]));
   T.bal = Math.abs(T.close) < 0.005;
   return { groups, T };
 }
@@ -213,6 +218,7 @@ const clean = o => JSON.parse(JSON.stringify(o, (k, v) => v === undefined ? null
 const mkLog = (action, x) => ({ ts: serverTimestamp(), by: S.user.uid, byName: S.me.name, role: role(), action, ...clean(x) });
 const brief = d => ({ dir: d.dir, amount: d.amount, mode: d.mode, bank: d.bank || '', payMode: d.payMode || '', commission: d.commission, commType: d.commType, note: d.note || '' });
 
+async function diagnose() { let r = 'FAILED'; try { await addDoc(collection(db, 'logs'), mkLog('diag', {})); r = 'OK'; } catch (e) { } return `Log write ${r}. Device date ${keyOf()}.`; }
 async function createTx(d, any) {
   if (!(any ? ALL_TYPES : allowedTypes()).includes(d.vendorType)) throw new Error('You cannot add entries for this vendor.');
   const col = d.vendorType === 'small' ? 'tx_small' : 'tx_main';
@@ -220,7 +226,7 @@ async function createTx(d, any) {
   const { reason, ...data } = d;
   b.set(ref, { ...data, status: 'active', editCount: 0, createdBy: S.user.uid, createdByName: S.me.name, createdAt: serverTimestamp() });
   b.set(doc(collection(db, 'logs')), mkLog('create', { col, txId: ref.id, vendorName: d.vendorName, dateKey: d.dateKey, after: brief(d) }));
-  await b.commit();
+  try { await b.commit(); } catch (e) { if (/permission|insufficient/i.test(e.code + ' ' + e.message)) throw new Error('Entry rejected by the security rules. ' + await diagnose()); throw e; }
 }
 async function changeTx(t, after, action, reason) {
   const before = {}; Object.keys(after).forEach(k => before[k] = t[k] ?? '');
@@ -248,12 +254,14 @@ function formHtml(t = {}, o = {}) {
   return `<form autocomplete="off">
   <label>Vendor<select name="vendor" required></select></label>
   ${o.group ? '<label data-small hidden>Small vendor<select name="smallVendor"></select></label>' : ''}
-  <div class="seg dir"><label><input type="radio" name="dir" value="in" ${t.dir !== 'out' ? 'checked' : ''}><span>Entry (In)</span></label><label><input type="radio" name="dir" value="out" ${t.dir === 'out' ? 'checked' : ''}><span>Exit (Out)</span></label></div>
+  <div class="vt" data-tally></div>
+  <div class="seg dir"><label><input type="radio" name="dir" value="out" ${t.dir !== 'in' ? 'checked' : ''}><span>Send</span></label><label><input type="radio" name="dir" value="in" ${t.dir === 'in' ? 'checked' : ''}><span>Receive</span></label></div>
   <div class="seg"><label><input type="radio" name="mode" value="cash" ${t.mode !== 'online' ? 'checked' : ''}><span>Cash</span></label><label><input type="radio" name="mode" value="online" ${t.mode === 'online' ? 'checked' : ''}><span>Online</span></label></div>
-  <div class="row2" data-online><label>Bank<select name="bank"></select></label><label>Mode<select name="payMode"></select></label></div>
-  <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${v('amount')}"></label>
-  <div class="row2"><label>Commission (₹)<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${v('commission', 0)}"></label>
-  <label>Commission is<select name="commType"><option value="taken">Taken from vendor</option><option value="given">Given to vendor</option></select></label></div>
+  ${o.noBank ? '' : '<div class="row2" data-online><label>Bank<select name="bank"></select></label><label>Mode<select name="payMode"></select></label></div>'}
+  <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${v('amount')}"></label>
+  <div class="row2" data-xrow><label>Add<select name="commType"><option value="none">None</option><option value="commission">Commission</option><option value="charge">Charge</option><option value="earning">Earning</option></select></label>
+  <label data-xamt hidden>Amount (₹)<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${t.commission ? esc(t.commission) : ''}"></label></div>
+  <div class="fn" data-xhelp hidden></div>
   <div class="row2"><label>Date${o.dateEditable ? '' : ' (today only)'}<input name="date" type="date" required value="${keyToIso(t.dateKey || keyOf())}" ${o.dateEditable ? `max="${keyToIso(keyOf())}"` : 'readonly'}></label>
   <label>Note (optional)<input name="note" value="${v('note')}"></label></div>
   ${o.reason ? '<label>Reason for change (sent to owner)<input name="reason" required></label>' : ''}
@@ -266,21 +274,29 @@ function syncForm(f, types, curVendor) {
   const vo = vs.filter(v => !grp || v.type !== 'small').map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]);
   if (grp) { vo.push(['__small', 'Small vendors ▸']); const sv = vs.filter(v => v.type === 'small').map(v => [v.id, v.name]); fillSel(f.elements.smallVendor, sv.length ? sv : [['', 'No small vendors yet']]); }
   fillSel(f.elements.vendor, vo.length ? vo : [['', 'No vendors yet – ask admin to add']]);
-  fillSel(f.elements.bank, S.cfg.banks.map(b => [b, b]));
-  fillSel(f.elements.payMode, S.cfg.modes.map(b => [b, b]));
+  if (f.elements.bank) { fillSel(f.elements.bank, S.cfg.banks.map(b => [b, b])); fillSel(f.elements.payMode, S.cfg.modes.map(b => [b, b])); }
 }
 function readForm(f) {
-  const g = n => f.elements[n].value; const v = S.vendors.find(x => x.id === (g('vendor') === '__small' ? g('smallVendor') : g('vendor')));
+  const g = n => f.elements[n]?.value ?? ''; const vid = g('vendor') === '__small' ? g('smallVendor') : g('vendor'); const v = S.vendors.find(x => x.id === vid);
   if (!v) throw new Error('Choose a vendor (ask admin to add vendors first).');
-  const mode = g('mode'); const amount = r2(parseFloat(g('amount'))); const commission = r2(parseFloat(g('commission')) || 0);
-  if (!(amount > 0)) throw new Error('Enter a valid amount.');
-  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: g('dir'), mode, bank: mode === 'online' ? g('bank') : '', payMode: mode === 'online' ? g('payMode') : '', amount, commission, commType: commission > 0 ? g('commType') : 'none', note: g('note').trim(), dateKey: isoToKey(g('date')), reason: f.elements.reason?.value.trim() || '' };
+  const mode = g('mode'); const amount = r2(parseFloat(g('amount')) || 0); const ct = g('commType'); const extra = ct === 'none' ? 0 : r2(parseFloat(g('commission')) || 0);
+  if (ct !== 'none' && !(extra > 0)) throw new Error('Enter the ' + XLABEL[ct].toLowerCase() + ' amount.');
+  if (!(amount > 0) && !(extra > 0)) throw new Error('Enter an amount.');
+  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: g('dir'), mode, bank: mode === 'online' ? g('bank') : '', payMode: mode === 'online' ? g('payMode') : '', amount, commission: extra, commType: ct, note: g('note').trim(), dateKey: isoToKey(g('date')), reason: g('reason').trim() };
 }
 function bindForm(f, { types, t, onSubmit }) {
   syncForm(f, types, t?.vendorId);
-  if (t) { f.elements.vendor.value = t.vendorId; f.elements.bank.value = t.bank || f.elements.bank.value; f.elements.payMode.value = t.payMode || f.elements.payMode.value; f.elements.commType.value = t.commType === 'given' ? 'given' : 'taken'; }
-  const tog = () => { f.querySelector('[data-online]').hidden = f.elements.mode.value !== 'online'; const sm = f.querySelector('[data-small]'); if (sm) sm.hidden = f.elements.vendor.value !== '__small';  };
-  f.addEventListener('input', tog); tog();
+  if (t) { f.elements.vendor.value = t.vendorId; if (f.elements.bank) { f.elements.bank.value = t.bank || f.elements.bank.value; f.elements.payMode.value = t.payMode || f.elements.payMode.value; } f.elements.commType.value = xt(t); }
+  const HELP = { commission: 'Credited to the vendor: lowers the vendor tally.', charge: 'Your cost for this vendor. Not part of any tally.', earning: 'Taken from the vendor: raises the vendor tally.' };
+  const tog = () => {
+    const on = f.querySelector('[data-online]'); if (on) on.hidden = f.elements.mode.value !== 'online';
+    const sm = f.querySelector('[data-small]'); if (sm) sm.hidden = f.elements.vendor.value !== '__small';
+    const x = f.elements.commType.value; f.querySelector('[data-xamt]').hidden = x === 'none'; f.querySelector('[data-xrow]').style.gridTemplateColumns = x === 'none' ? '1fr' : '1fr 1fr';
+    const h = f.querySelector('[data-xhelp]'); h.hidden = x === 'none'; h.textContent = HELP[x] || '';
+    const vid = f.elements.vendor.value === '__small' ? f.elements.smallVendor?.value : f.elements.vendor.value;
+    const el = f.querySelector('[data-tally]'); if (el) el.innerHTML = vid ? tallyHtml(vendorBalance(vid)) : '';
+  };
+  f._upd = tog; f.addEventListener('input', tog); tog();
   f.addEventListener('submit', async e => {
     e.preventDefault(); const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
     try { await onSubmit(readForm(f), f); } catch (err) { toast(errMsg(err), true); } finally { btn.disabled = false; }
@@ -291,11 +307,11 @@ function bindForm(f, { types, t, onSubmit }) {
 function txList(rows, o = {}) {
   if (!rows.length) return '<p class="muted" style="padding:4px 2px;margin:0">No entries.</p>';
   const act = o.act !== false && role() !== 'admin';
-  return rows.map(t => `<div class="li ${t.status === 'void' ? 'void' : ''}"><div class="l">
+  return rows.map(t => { const x = xt(t); return `<div class="li ${t.status === 'void' ? 'void' : ''}"><div class="l">
     <b>${esc(t.vendorName)}${t.kind === 'opening' ? '<span class="tag g">opening</span>' : ''}${t.editCount ? '<span class="tag">edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</b>
-    <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.mode === 'cash' ? 'Cash' : esc(t.bank) + '/' + esc(t.payMode)}${t.note ? ' · ' + esc(t.note) : ''}</small>
+    <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.dir === 'in' ? 'Receive' : 'Send'} · ${t.mode === 'cash' ? 'Cash' : 'Online' + (t.bank ? ' ' + esc(t.bank) + (t.payMode ? '/' + esc(t.payMode) : '') : '')}${t.note ? ' · ' + esc(t.note) : ''}</small>
     ${act ? `<div class="acts"><button class="btn sec xs" data-act="edit" data-col="${t._col}" data-id="${t.id}">${canDirect(t) ? 'Edit' : 'Edit*'}</button><button class="btn sec xs" data-act="void" data-col="${t._col}" data-id="${t.id}">${t.status === 'void' ? 'Restore' : 'Void'}</button>${o.del && role() === 'owner' ? `<button class="btn red xs" data-act="del" data-col="${t._col}" data-id="${t.id}">Delete</button>` : ''}</div>` : ''}</div>
-    <div class="r"><b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>${t.commission ? `<small>comm ${inr(t.commission)} ${t.commType}</small>` : ''}</div></div>`).join('') + (o.note || '');
+    <div class="r">${t.amount > 0 ? `<b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>` : ''}${x !== 'none' && t.commission ? `<small>${XLABEL[x]} ${inr(t.commission)}</small>` : ''}</div></div>`; }).join('') + (o.note || '');
 }
 const findTx = (col, id) => allTx().find(x => x._col === col && x.id === id);
 
@@ -303,7 +319,7 @@ function openEdit(col, id) {
   const t = findTx(col, id); if (!t) return;
   const direct = canDirect(t);
   const types = col === 'tx_small' ? ['small'] : ['main1', 'main2'];
-  const m = modal(`<h3>Edit entry</h3>${direct ? '' : '<p class="warn" style="margin:0 0 8px">The 5-hour edit window has passed. Your change goes to the owner for approval.</p>'}${formHtml(t, { dateEditable: role() === 'owner', reason: !direct, submit: direct ? 'Save changes' : 'Send for approval' })}`);
+  const m = modal(`<h3>Edit entry</h3>${direct ? '' : '<p class="warn" style="margin:0 0 8px">The 5-hour edit window has passed. Your change goes to the owner for approval.</p>'}${formHtml(t, { dateEditable: role() === 'owner', noBank: role() === 'accountant', reason: !direct, submit: direct ? 'Save changes' : 'Send for approval' })}`);
   bindForm($('form', m), { types, t, onSubmit: async d => {
     if (d.dateKey > keyOf()) throw new Error('Date cannot be in the future.');
     const after = {}; FIELDS.forEach(k => { if (d[k] !== (t[k] ?? '') && !(k === 'note' && !d.note && !t.note)) after[k] = d[k]; });
@@ -352,8 +368,8 @@ function download(sheets, name) {
   XLSX.writeFile(wb, `${name}_${keyOf()}.xlsx`);
 }
 function exportTx(rows) {
-  const data = rows.map(t => ({ Date: keyToStr(t.dateKey), Time: dt(t.createdAt), Group: GROUPS[t.vendorType], Vendor: t.vendorName, Direction: t.dir === 'in' ? 'Entry (In)' : 'Exit (Out)', Mode: t.mode, Bank: t.bank, 'Pay mode': t.payMode, Amount: t.amount, Commission: t.commission, 'Commission type': t.commType, Status: t.status, Note: t.note || '', 'Entered by': t.createdByName || '', Edits: t.editCount || 0, 'Last edited by': t.editedByName || '' }));
-  const vm = {}; rows.filter(t => t.status !== 'void').forEach(t => { const r = vm[t.vendorId] ||= { Group: GROUPS[t.vendorType], Vendor: t.vendorName, In: 0, Out: 0, Net: 0, 'Commission taken': 0, 'Commission given': 0 }; if (t.dir === 'in') r.In += t.amount; else r.Out += t.amount; r.Net = r2(r.In - r.Out); if (t.commType === 'taken') r['Commission taken'] += t.commission; if (t.commType === 'given') r['Commission given'] += t.commission; });
+  const data = rows.map(t => ({ Date: keyToStr(t.dateKey), Time: dt(t.createdAt), Group: GROUPS[t.vendorType], Vendor: t.vendorName, Type: t.dir === 'in' ? 'Receive' : 'Send', Mode: t.mode, Bank: t.bank, 'Pay mode': t.payMode, Amount: t.amount, Extra: xt(t) === 'none' ? '' : XLABEL[xt(t)], 'Extra amount': t.commission || 0, 'Tally effect': effect(t), Status: t.status, Note: t.note || '', 'Entered by': t.createdByName || '', Edits: t.editCount || 0, 'Last edited by': t.editedByName || '' }));
+  const vm = {}; rows.filter(t => t.status !== 'void').forEach(t => { const r = vm[t.vendorId] ||= { Group: GROUPS[t.vendorType], Vendor: t.vendorName, Sent: 0, Received: 0, Commission: 0, Earning: 0, Charges: 0, 'Tally effect': 0 }; if (t.dir === 'out') r.Sent += t.amount; else r.Received += t.amount; const x = xt(t); if (x === 'commission') r.Commission += t.commission; if (x === 'earning') r.Earning += t.commission; if (x === 'charge') r.Charges += t.commission; r['Tally effect'] = r2(r['Tally effect'] + effect(t)); });
   download({ Transactions: data, 'Vendor summary': Object.values(vm) }, 'transactions');
 }
 
@@ -366,22 +382,22 @@ VIEWS.entry = (() => { let root;
   return {
     init(m) {
       root = m; const owner = role() === 'owner';
-      m.innerHTML = `<div class="fn warn" id="hint" hidden></div><div class="card" style="margin:0">${formHtml({}, { group: owner })}</div><div class="today" id="live"></div>`;
+      m.innerHTML = `<div class="fn warn" id="hint" hidden></div><div class="card" style="margin:0">${formHtml({}, { group: owner, noBank: role() === 'accountant' })}</div><div class="today" id="live"></div>`;
       bindForm($('form', m), { types: allowedTypes(), onSubmit: async (d, f) => {
         if (d.dateKey !== keyOf()) throw new Error('Entries can only be made for today.');
-        await createTx(d); toast('Saved'); f.elements.amount.value = ''; f.elements.commission.value = 0; f.elements.note.value = ''; f.dispatchEvent(new Event('input'));
+        await createTx(d); toast('Saved'); f.elements.amount.value = ''; f.elements.commission.value = ''; f.elements.commType.value = 'none'; f.elements.note.value = ''; f.dispatchEvent(new Event('input'));
       } });
     },
     live() {
-      if (!root) return; const f = $('form', root); if (f) syncForm(f, allowedTypes());
+      if (!root) return; const f = $('form', root); if (f) { syncForm(f, allowedTypes()); f._upd?.(); }
       const h = $('#hint', root); if (h) { h.hidden = !(S.ready.vendors && !S.vendors.some(v => allowedTypes().includes(v.type) && v.active !== false)); h.textContent = 'No vendors yet. Ask the admin to add them under Vendors.'; }
       const act = allTx().filter(t => t.dateKey === keyOf() && allowedTypes().includes(t.vendorType) && t.status !== 'void');
-      live(root).innerHTML = `Today: ${act.length} entries · In ${inr(sum(act.filter(t => t.dir === 'in'), t => t.amount))} · Out ${inr(sum(act.filter(t => t.dir === 'out'), t => t.amount))}`;
+      live(root).innerHTML = `Today: ${act.length} entries · Sent ${inr(sum(act.filter(t => t.dir === 'out'), t => t.amount))} · Received ${inr(sum(act.filter(t => t.dir === 'in'), t => t.amount))}`;
     }
   };
 })();
 
-/* --- Balances (second screen) --- */
+/* --- Balances: tally view --- */
 VIEWS.ledger = (() => { let root;
   return {
     init(m) {
@@ -389,13 +405,13 @@ VIEWS.ledger = (() => { let root;
       m.innerHTML = `<div class="bar"><input type="date" name="d" value="${f.d}"><button class="btn sec ic" data-n="-1">‹</button><button class="btn sec ic" data-n="1">›</button>${role() !== 'accountant' ? '<button class="btn ic" data-x="1">⬇ Excel</button>' : ''}</div><div id="live"></div>`;
       m.addEventListener('input', e => { if (e.target.name === 'd' && e.target.value) { f.d = e.target.value; VIEWS.ledger.live(); } });
       m.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.n) { f.d = addDays(f.d, +b.dataset.n); $('[name=d]', m).value = f.d; VIEWS.ledger.live(); }
-        if (b.dataset.x) { const rows = ledgerFor(allTx(), isoToKey(f.d), visibleTypes()).map(r => ({ Group: GROUPS[r.type], Vendor: r.name, Opening: r.open, In: r.in, Out: r.out, 'Commission taken': r.taken, 'Commission given': r.given, Closing: r.close })); download({ Balances: rows }, 'balances_' + f.d); } });
+        if (b.dataset.x) { const rows = ledgerFor(allTx(), isoToKey(f.d), visibleTypes()).map(r => ({ Group: GROUPS[r.type], Vendor: r.name, Opening: r.open, Sent: r.snd, Received: r.rcv, Commission: r.com, Earning: r.ern, Charges: r.chg, Closing: r.close })); download({ Balances: rows }, 'balances_' + f.d); } });
     },
     live() {
       if (!root) return; const { groups, T } = ledgerCalc(isoToKey(S.f.ledger.d), visibleTypes());
-      live(root).innerHTML = kpi([['Opening', inr(T.open)], ['In', inr(T.in), 'in'], ['Out', inr(T.out), 'out'], [T.bal ? 'Closing ✓' : 'Carry-forward', inr(T.close), T.bal ? 'in' : 'warn']])
-        + groups.map(g => `<div class="card"><div class="gh"><b>${GROUPS[g.ty]}</b><b class="${g.close ? 'warn' : 'muted'}">${inr(g.close)}</b></div>${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · In ${num(r.in)} · Out ${num(r.out)}${r.taken || r.given ? ` · Comm +${num(r.taken)} −${num(r.given)}` : ''}</small></div><div class="r"><b class="${r.close ? 'warn' : ''}">${inr(r.close)}</b></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
-        + '<div class="fn">Net = In − Out. Everything together should close at ₹0; any vendor balance left is carried to the next day. Commission is not part of the tally.</div>';
+      live(root).innerHTML = kpi([['Opening', signed(T.open)], ['Sent', inr(T.snd), 'out'], ['Received', inr(T.rcv), 'in'], [T.bal ? 'Closing ✓' : 'Carry-fwd', signed(T.close), T.bal ? 'in' : 'warn']])
+        + groups.map(g => `<div class="card"><div class="gh"><b>${GROUPS[g.ty]}</b><b class="${g.close ? 'warn' : 'muted'}">${signed(g.close)}</b></div>${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · Sent ${num(r.snd)} · Recv ${num(r.rcv)}${r.com ? ' · Comm ' + num(r.com) : ''}${r.ern ? ' · Earn ' + num(r.ern) : ''}${r.chg ? ' · Charge ' + num(r.chg) : ''}</small></div><div class="r"><b class="${r.close > 0 ? 'warn' : r.close < 0 ? 'out' : ''}">${signed(r.close)}</b><small>${r.close > 0 ? 'owes owner' : r.close < 0 ? 'owner owes' : 'settled'}</small></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
+        + '<div class="fn">Tally = what the vendor owes the owner (+) or the owner owes the vendor (−). Send adds, Receive reduces, Commission reduces, Earning adds. Charges are not in the tally. All vendors together should close at ₹0; leftovers carry to the next day.</div>';
     }
   };
 })();
@@ -408,10 +424,10 @@ VIEWS.dash = (() => { let root;
       if (!root) return; const key = keyOf(); const { groups, T } = ledgerCalc(key, ALL_TYPES);
       const day = allTx().filter(t => t.dateKey === key && t.status !== 'void');
       const pend = S.approvals.filter(a => a.status === 'pending').length;
-      const comm = r2(sum(day.filter(t => t.commType === 'taken'), t => t.commission) - sum(day.filter(t => t.commType === 'given'), t => t.commission));
-      live(root).innerHTML = `<div class="banner ${T.bal ? 'ok' : 'wn'}">${T.bal ? '✓ Tally balanced' : '⚠ Carry-forward ' + inr(T.close)}<span>${keyToStr(key)}</span></div>
-      <div class="tiles">${groups.map(g => `<div class="tile"><small>${SHORT[g.ty]}</small><b class="${g.close ? 'warn' : ''}">${inr(g.close)}</b><small>In ${num(g.in)} · Out ${num(g.out)}</small></div>`).join('')}</div>
-      ${kpi([['Commission net', inr(comm), comm < 0 ? 'out' : ''], ['Entries today', day.length], ['Pending approvals', pend, pend ? 'warn' : '', 'data-act="go" data-tab="review"']])}
+      const xs = k => inr(sum(day.filter(t => xt(t) === k), t => t.commission));
+      live(root).innerHTML = `<div class="banner ${T.bal ? 'ok' : 'wn'}">${T.bal ? '✓ Tally balanced' : '⚠ Carry-forward ' + signed(T.close)}<span>${keyToStr(key)}</span></div>
+      <div class="tiles">${groups.map(g => `<div class="tile"><small>${SHORT[g.ty]}</small><b class="${g.close ? 'warn' : ''}">${signed(g.close)}</b><small>Sent ${num(g.snd)} · Recv ${num(g.rcv)}</small></div>`).join('')}</div>
+      ${kpi([['Earning', xs('earning'), 'in'], ['Commission', xs('commission')], ['Charges', xs('charge'), 'out'], ['Pending', pend, pend ? 'warn' : '', 'data-act="go" data-tab="review"']])}
       <div class="card"><div class="gh"><b>Latest entries</b></div>${txList(sortTx(day).slice(0, 6), { act: false })}</div>`;
     }
   };
@@ -430,10 +446,10 @@ VIEWS.tx = (() => { let root; const F = () => S.f.tx ||= { from: keyToIso(keyOf(
       <div class="card" id="flt" hidden><div class="filters">
       <label>Vendor<select name="vendor"></select></label>
       ${adm ? '<label>Group<select name="group"><option value="">All</option><option value="small">Small vendors</option><option value="main1">Main vendor 1</option><option value="main2">Main vendor 2</option></select></label>' : '<label>Search<input name="q" placeholder="vendor / note"></label>'}
-      <label>Entry / Exit<select name="dir"><option value="">All</option><option value="in">Entry (In)</option><option value="out">Exit (Out)</option></select></label>
+      <label>Send / Receive<select name="dir"><option value="">All</option><option value="out">Send</option><option value="in">Receive</option></select></label>
       <label>Cash / Online<select name="mode"><option value="">All</option><option value="cash">Cash</option><option value="online">Online</option></select></label>
-      <label>Bank<select name="bank"></select></label>${adm ? '<label>Search<input name="q" placeholder="vendor / note"></label>' : ''}</div></div><div id="live"></div>`;
-      const sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); fillSel($('[name=bank]', m), [['', 'All banks'], ...S.cfg.banks.map(b => [b, b])]); ['vendor', 'group', 'dir', 'mode', 'bank'].forEach(k => { const el = $(`[name=${k}]`, m); if (el) el.value = f[k]; }); const q = $('[name=q]', m); if (q) q.value = f.q; };
+      ${adm ? '<label>Bank<select name="bank"></select></label>' : ''}${adm ? '<label>Search<input name="q" placeholder="vendor / note"></label>' : ''}</div></div><div id="live"></div>`;
+      const sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); const bk = $('[name=bank]', m); if (bk) fillSel(bk, [['', 'All banks'], ...S.cfg.banks.map(b => [b, b])]); ['vendor', 'group', 'dir', 'mode', 'bank'].forEach(k => { const el = $(`[name=${k}]`, m); if (el) el.value = f[k]; }); const q = $('[name=q]', m); if (q) q.value = f.q; };
       sync(); VIEWS.tx.sync = sync;
       m.addEventListener('input', e => { const n = e.target.name; if (n && n in f) { f[n] = e.target.value; f.limit = 100; VIEWS.tx.live(); } });
       m.addEventListener('click', e => {
@@ -451,16 +467,15 @@ VIEWS.tx = (() => { let root; const F = () => S.f.tx ||= { from: keyToIso(keyOf(
     },
     live() {
       if (!root) return; VIEWS.tx.sync?.(); const rows = filtered(), act = rows.filter(t => t.status !== 'void'), f = F();
-      const inn = sum(act.filter(t => t.dir === 'in'), t => t.amount), out = sum(act.filter(t => t.dir === 'out'), t => t.amount);
-      const comm = r2(sum(act.filter(t => t.commType === 'taken'), t => t.commission) - sum(act.filter(t => t.commType === 'given'), t => t.commission));
-      live(root).innerHTML = kpi([['In', inr(inn), 'in'], ['Out', inr(out), 'out'], ['Net', inr(r2(inn - out))], ['Comm. net', inr(comm)]])
+      const xs = k => inr(sum(act.filter(t => xt(t) === k), t => t.commission));
+      live(root).innerHTML = kpi([['Sent', inr(sum(act.filter(t => t.dir === 'out'), t => t.amount)), 'out'], ['Received', inr(sum(act.filter(t => t.dir === 'in'), t => t.amount)), 'in'], ['Comm.', xs('commission')], ['Earning', xs('earning')]])
         + `<div class="card"><div class="gh"><b>${rows.length} entries</b>${role() === 'accountant' ? '<span class="muted" style="font-size:11px">Edit* = needs owner approval</span>' : ''}</div>${txList(rows.slice(0, f.limit), { note: rows.length > f.limit ? '<p style="margin:8px 0 0"><button class="btn sec full" data-more="1">Show more</button></p>' : '' })}</div>`;
     }
   };
 })();
 
 /* --- Approvals --- */
-const diffHtml = (b, a) => Object.keys(a).filter(k => LABEL[k]).map(k => { const f = (k, v) => k === 'dateKey' ? keyToStr(v) : k === 'amount' || k === 'commission' ? inr(v) : k === 'dir' ? (v === 'in' ? 'Entry (In)' : 'Exit (Out)') : (v === '' || v == null ? '–' : esc(v)); return `<div class="diff">${LABEL[k]}: <s class="muted">${f(k, b?.[k])}</s> → <b>${f(k, a[k])}</b></div>`; }).join('');
+const diffHtml = (b, a) => Object.keys(a).filter(k => LABEL[k]).map(k => { const f = (k, v) => k === 'dateKey' ? keyToStr(v) : k === 'amount' || k === 'commission' ? inr(v) : k === 'dir' ? (v === 'in' ? 'Receive' : 'Send') : k === 'commType' ? (XLABEL[xt({ commType: v })] || 'None') : (v === '' || v == null ? '–' : esc(v)); return `<div class="diff">${LABEL[k]}: <s class="muted">${f(k, b?.[k])}</s> → <b>${f(k, a[k])}</b></div>`; }).join('');
 VIEWS.approvals = (() => { let root;
   return {
     init(m) { root = m; m.innerHTML = '<div id="live"></div>'; },
@@ -487,7 +502,7 @@ VIEWS.requests = (() => { let root;
 /* --- Action log --- */
 function describeLog(l) {
   const b = l.before || {}, a = l.after || {};
-  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.dir === 'in' ? 'IN' : 'OUT'} ${inr(x.amount)} · ${x.mode}${x.bank ? ' ' + esc(x.bank) + '/' + esc(x.payMode) : ''}${x.commission ? ' · comm ' + inr(x.commission) + ' ' + x.commType : ''}`; }
+  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.dir === 'in' ? 'RECEIVE' : 'SEND'} ${inr(x.amount)} · ${x.mode}${x.bank ? ' ' + esc(x.bank) + '/' + esc(x.payMode) : ''}${x.commission ? ' · ' + (XLABEL[xt(x)] || 'extra') + ' ' + inr(x.commission) : ''}`; }
   return diffHtml(b, a) + (l.reason ? `<div class="muted">${esc(l.reason)}</div>` : '');
 }
 VIEWS.log = (() => { let root;
@@ -552,12 +567,12 @@ VIEWS.opening = (() => { let root, dirty = false;
     const k = isoToKey(st().d); const vs = S.vendors.filter(v => v.active !== false).sort(byName);
     live(root).innerHTML = ALL_TYPES.map(ty => { const g = vs.filter(v => v.type === ty); if (!g.length) return '';
       return `<div class="card"><div class="gh"><b>${GROUPS[ty]}</b></div>${g.map(v => { const ex = existing(v.id, k);
-        return `<div class="li" style="align-items:center"><div class="l"><b>${esc(v.name)}</b></div><div style="display:flex;gap:6px"><select data-d="${v.id}" style="width:72px;margin:0"><option value="in" ${!ex || ex.dir === 'in' ? 'selected' : ''}>In</option><option value="out" ${ex && ex.dir === 'out' ? 'selected' : ''}>Out</option></select><input data-a="${v.id}" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0" value="${ex ? ex.amount : ''}" style="width:104px;margin:0"></div></div>`; }).join('')}</div>`; }).join('') || '<p class="muted">Add vendors first (admin → Vendors).</p>';
+        return `<div class="li" style="align-items:center"><div class="l"><b>${esc(v.name)}</b></div><div style="display:flex;gap:6px"><select data-d="${v.id}" style="width:118px;margin:0"><option value="out" ${!ex || ex.dir === 'out' ? 'selected' : ''}>Vendor owes</option><option value="in" ${ex && ex.dir === 'in' ? 'selected' : ''}>Owner owes</option></select><input data-a="${v.id}" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0" value="${ex ? ex.amount : ''}" style="width:104px;margin:0"></div></div>`; }).join('')}</div>`; }).join('') || '<p class="muted">Add vendors first (admin → Vendors).</p>';
   };
   const save = async () => {
     const k = isoToKey(st().d); if (!st().d || k >= keyOf()) throw new Error('Pick a date before today.'); let n = 0;
     for (const v of S.vendors.filter(v => v.active !== false)) {
-      const a = r2(parseFloat($(`[data-a="${v.id}"]`, root)?.value) || 0), dir = $(`[data-d="${v.id}"]`, root)?.value || 'in', ex = existing(v.id, k);
+      const a = r2(parseFloat($(`[data-a="${v.id}"]`, root)?.value) || 0), dir = $(`[data-d="${v.id}"]`, root)?.value || 'out', ex = existing(v.id, k);
       if (ex) { if (a <= 0) { await changeTx(ex, { status: 'void' }, 'void'); n++; } else if (a !== ex.amount || dir !== ex.dir) { await changeTx(ex, { amount: a, dir }, 'edit'); n++; } }
       else if (a > 0) { await createTx({ vendorId: v.id, vendorName: v.name, vendorType: v.type, dir, mode: 'cash', bank: '', payMode: '', amount: a, commission: 0, commType: 'none', note: 'Opening balance', dateKey: k, kind: 'opening' }, true); n++; }
     }
@@ -565,7 +580,7 @@ VIEWS.opening = (() => { let root, dirty = false;
   };
   return {
     init(m) { root = m; dirty = false; const f = st();
-      m.innerHTML = `<div class="fn" style="margin-top:0">Enter the balance each vendor was left with at the end of that day. It carries into the next day's Opening balance. <b>In</b> = net received, <b>Out</b> = net paid. Leave blank for none. Amounts add to anything already recorded for earlier days, so use this mainly when starting out.</div>
+      m.innerHTML = `<div class="fn" style="margin-top:0">Enter what each vendor owed (or was owed) at the end of that day. It carries into the next day's Opening balance. <b>Vendor owes</b> = vendor is in arrears with you. <b>Owner owes</b> = you are in arrears with the vendor. Leave blank for none. Amounts add to anything already recorded for earlier days, so use this mainly when starting out.</div>
       <div class="bar"><input type="date" name="d" value="${f.d}" max="${addDays(keyToIso(keyOf()), -1)}"><button class="btn ic" data-save="1">Save</button></div><div id="live"></div>`;
       m.addEventListener('input', e => { if (e.target.name === 'd') { if (e.target.value) { f.d = e.target.value; dirty = false; render(); } } else dirty = true; });
       m.addEventListener('click', async e => { const b = e.target.closest('[data-save]'); if (!b) return; b.disabled = true;
@@ -573,6 +588,29 @@ VIEWS.opening = (() => { let root, dirty = false;
       render();
     },
     live() { if (root && !dirty) render(); }
+  };
+})();
+
+/* --- Charges / commission / earning report --- */
+VIEWS.charges = (() => { let root;
+  const F = () => S.f.chg ||= { from: keyToIso(keyOf()).slice(0, 8) + '01', to: keyToIso(keyOf()), vendor: '', type: 'charge' };
+  const rows = () => { const f = F(); const fk = f.from ? isoToKey(f.from) : 0, tk = f.to ? isoToKey(f.to) : 99999999;
+    return sortTx(allTx().filter(t => t.status !== 'void' && visibleTypes().includes(t.vendorType) && xt(t) === f.type && t.commission > 0 && t.dateKey >= fk && t.dateKey <= tk && (!f.vendor || t.vendorId === f.vendor))); };
+  const byVendor = r => { const m = {}; r.forEach(t => { const o = m[t.vendorId] ||= { name: t.vendorName, n: 0, total: 0 }; o.n++; o.total += t.commission; }); return Object.values(m).map(o => ({ ...o, total: r2(o.total) })).sort((a, b) => b.total - a.total); };
+  return {
+    init(m) { root = m; const f = F();
+      m.innerHTML = `<div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}">${role() !== 'accountant' ? '<button class="btn ic" data-x="1">⬇</button>' : ''}</div>
+      <div class="bar"><select name="type" style="margin:0"><option value="charge">Charges</option><option value="commission">Commission</option><option value="earning">Earning</option></select><select name="vendor" style="margin:0"></select></div><div id="live"></div>`;
+      VIEWS.charges.sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); $('[name=vendor]', m).value = f.vendor; $('[name=type]', m).value = f.type; };
+      VIEWS.charges.sync();
+      m.addEventListener('input', e => { const n = e.target.name; if (n && n in f) { f[n] = e.target.value; VIEWS.charges.live(); } });
+      m.addEventListener('click', e => { if (!e.target.closest('[data-x]')) return; const r = rows();
+        download({ Entries: r.map(t => ({ Date: keyToStr(t.dateKey), Vendor: t.vendorName, Type: XLABEL[xt(t)], Amount: t.commission, Note: t.note || '' })), 'By vendor': byVendor(r).map(o => ({ Vendor: o.name, Entries: o.n, Total: o.total })) }, F().type + '_report'); });
+    },
+    live() { if (!root) return; VIEWS.charges.sync?.(); const r = rows(), list = byVendor(r), f = F();
+      live(root).innerHTML = kpi([['Total ' + XLABEL[f.type].toLowerCase(), inr(sum(r, t => t.commission))], ['Entries', r.length], ['Vendors', list.length]])
+        + `<div class="card"><div class="gh"><b>By vendor</b></div>${list.map(o => `<div class="li"><div class="l"><b>${esc(o.name)}</b><small>${o.n} entries</small></div><div class="r"><b>${inr(o.total)}</b></div></div>`).join('') || '<p class="muted" style="margin:0">Nothing in this period.</p>'}</div>`
+        + `<div class="card"><div class="gh"><b>Entries</b></div>${r.slice(0, 200).map(t => `<div class="li"><div class="l"><b>${esc(t.vendorName)}</b><small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.note ? ' · ' + esc(t.note) : ''}</small></div><div class="r"><b>${inr(t.commission)}</b></div></div>`).join('') || '<p class="muted" style="margin:0">No entries.</p>'}</div>`; }
   };
 })();
 
@@ -609,15 +647,15 @@ const combo = (subs, memo) => { let root, area, cur;
   };
 };
 VIEWS.review = combo([['approvals', 'Approvals'], ['fix', 'Corrections'], ['log', 'Action log']], 'reviewSub');
-VIEWS.balances = combo([['ledger', 'Tally'], ['opening', 'Opening balances']], 'balSub');
+VIEWS.balances = { init(m) { const subs = role() === 'owner' ? [['ledger', 'Tally'], ['opening', 'Opening'], ['charges', 'Charges']] : [['ledger', 'Tally'], ['charges', 'Charges']]; this.c = combo(subs, 'balSub'); this.c.init(m); }, live() { this.c?.live(); } };
 VIEWS.more = combo([['settings', 'Settings'], ['log', 'Action log']], 'moreSub');
 
 /* ================= shell / auth ================= */
 const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase().replace(/\s+/g, '') + '@ledger.local'; };
 const TABS = {
-  accountant: [['entry', 'Entry', 'entry'], ['ledger', 'Balances', 'ledger'], ['tx', 'History', 'clock'], ['requests', 'My edits', 'edits']],
+  accountant: [['entry', 'Entry', 'entry'], ['balances', 'Balances', 'ledger'], ['tx', 'History', 'clock'], ['requests', 'My edits', 'edits']],
   owner: [['entry', 'Add entry', 'entry'], ['balances', 'Balances', 'ledger'], ['dash', 'Dashboard', 'dash'], ['tx', 'Transactions', 'tx'], ['review', 'Review', 'review']],
-  admin: [['ledger', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'More', 'more']]
+  admin: [['balances', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'More', 'more']]
 };
 
 function showLogin() {
