@@ -119,7 +119,7 @@ const ALL_TYPES = ['small', 'main1', 'main2'];
 const DEFAULT_BANKS = ['HDFC', 'SBI', 'ICICI', 'Axis', 'Kotak', 'PNB', 'Other'];
 const DEFAULT_MODES = ['UPI', 'NEFT', 'IMPS', 'RTGS', 'Cheque', 'Card'];
 const LABEL = { vendorName: 'Vendor', dir: 'Type', mode: 'Mode', bank: 'Bank', payMode: 'Pay mode', amount: 'Amount', commission: 'Extra amount', commType: 'Extra', note: 'Note', dateKey: 'Date', status: 'Status' };
-const FIELDS = ['vendorId', 'vendorName', 'vendorType', 'dir', 'mode', 'bank', 'payMode', 'amount', 'commission', 'commType', 'note', 'dateKey'];
+const FIELDS = ['vendorId', 'vendorName', 'vendorType', 'dir', 'amount', 'commission', 'commType', 'note', 'dateKey'];
 
 const ICON = {
   entry: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
@@ -256,8 +256,6 @@ function formHtml(t = {}, o = {}) {
   ${o.group ? '<label data-small hidden>Small vendor<select name="smallVendor"></select></label>' : ''}
   <div class="vt" data-tally></div>
   <div class="seg dir"><label><input type="radio" name="dir" value="out" ${t.dir !== 'in' ? 'checked' : ''}><span>Send</span></label><label><input type="radio" name="dir" value="in" ${t.dir === 'in' ? 'checked' : ''}><span>Receive</span></label></div>
-  <div class="seg"><label><input type="radio" name="mode" value="cash" ${t.mode !== 'online' ? 'checked' : ''}><span>Cash</span></label><label><input type="radio" name="mode" value="online" ${t.mode === 'online' ? 'checked' : ''}><span>Online</span></label></div>
-  ${o.noBank ? '' : '<div class="row2" data-online><label>Bank<select name="bank"></select></label><label>Mode<select name="payMode"></select></label></div>'}
   <label>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${v('amount')}"></label>
   <div class="row2" data-xrow><label>Add<select name="commType"><option value="none">None</option><option value="commission">Commission</option><option value="charge">Charge</option><option value="earning">Earning</option></select></label>
   <label data-xamt hidden>Amount (₹)<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${t.commission ? esc(t.commission) : ''}"></label></div>
@@ -274,22 +272,20 @@ function syncForm(f, types, curVendor) {
   const vo = vs.filter(v => !grp || v.type !== 'small').map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]);
   if (grp) { vo.push(['__small', 'Small vendors ▸']); const sv = vs.filter(v => v.type === 'small').map(v => [v.id, v.name]); fillSel(f.elements.smallVendor, sv.length ? sv : [['', 'No small vendors yet']]); }
   fillSel(f.elements.vendor, vo.length ? vo : [['', 'No vendors yet – ask admin to add']]);
-  if (f.elements.bank) { fillSel(f.elements.bank, S.cfg.banks.map(b => [b, b])); fillSel(f.elements.payMode, S.cfg.modes.map(b => [b, b])); }
 }
 function readForm(f) {
   const g = n => f.elements[n]?.value ?? ''; const vid = g('vendor') === '__small' ? g('smallVendor') : g('vendor'); const v = S.vendors.find(x => x.id === vid);
   if (!v) throw new Error('Choose a vendor (ask admin to add vendors first).');
-  const mode = g('mode'); const amount = r2(parseFloat(g('amount')) || 0); const ct = g('commType'); const extra = ct === 'none' ? 0 : r2(parseFloat(g('commission')) || 0);
+  const amount = r2(parseFloat(g('amount')) || 0); const ct = g('commType'); const extra = ct === 'none' ? 0 : r2(parseFloat(g('commission')) || 0);
   if (ct !== 'none' && !(extra > 0)) throw new Error('Enter the ' + XLABEL[ct].toLowerCase() + ' amount.');
   if (!(amount > 0) && !(extra > 0)) throw new Error('Enter an amount.');
-  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: g('dir'), mode, bank: mode === 'online' ? g('bank') : '', payMode: mode === 'online' ? g('payMode') : '', amount, commission: extra, commType: ct, note: g('note').trim(), dateKey: isoToKey(g('date')), reason: g('reason').trim() };
+  return { vendorId: v.id, vendorName: v.name, vendorType: v.type, dir: g('dir'), mode: 'cash', bank: '', payMode: '', amount, commission: extra, commType: ct, note: g('note').trim(), dateKey: isoToKey(g('date')), reason: g('reason').trim() };
 }
 function bindForm(f, { types, t, onSubmit }) {
   syncForm(f, types, t?.vendorId);
-  if (t) { f.elements.vendor.value = t.vendorId; if (f.elements.bank) { f.elements.bank.value = t.bank || f.elements.bank.value; f.elements.payMode.value = t.payMode || f.elements.payMode.value; } f.elements.commType.value = xt(t); }
+  if (t) { f.elements.vendor.value = t.vendorId; f.elements.commType.value = xt(t); }
   const HELP = { commission: 'Credited to the vendor: lowers the vendor tally.', charge: 'Your cost for this vendor. Not part of any tally.', earning: 'Taken from the vendor: raises the vendor tally.' };
   const tog = () => {
-    const on = f.querySelector('[data-online]'); if (on) on.hidden = f.elements.mode.value !== 'online';
     const sm = f.querySelector('[data-small]'); if (sm) sm.hidden = f.elements.vendor.value !== '__small';
     const x = f.elements.commType.value; f.querySelector('[data-xamt]').hidden = x === 'none'; f.querySelector('[data-xrow]').style.gridTemplateColumns = x === 'none' ? '1fr' : '1fr 1fr';
     const h = f.querySelector('[data-xhelp]'); h.hidden = x === 'none'; h.textContent = HELP[x] || '';
@@ -309,7 +305,7 @@ function txList(rows, o = {}) {
   const act = o.act !== false && role() !== 'admin';
   return rows.map(t => { const x = xt(t); return `<div class="li ${t.status === 'void' ? 'void' : ''}"><div class="l">
     <b>${esc(t.vendorName)}${t.kind === 'opening' ? '<span class="tag g">opening</span>' : ''}${t.editCount ? '<span class="tag">edited</span>' : ''}${t.status === 'void' ? '<span class="tag r">void</span>' : ''}</b>
-    <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.dir === 'in' ? 'Receive' : 'Send'} · ${t.mode === 'cash' ? 'Cash' : 'Online' + (t.bank ? ' ' + esc(t.bank) + (t.payMode ? '/' + esc(t.payMode) : '') : '')}${t.note ? ' · ' + esc(t.note) : ''}</small>
+    <small>${keyShort(t.dateKey)} · ${tm(t.createdAt)}${t.createdByName ? ' · ' + esc(t.createdByName) : ''} · ${t.dir === 'in' ? 'Receive' : 'Send'}${t.note ? ' · ' + esc(t.note) : ''}</small>
     ${act ? `<div class="acts"><button class="btn sec xs" data-act="edit" data-col="${t._col}" data-id="${t.id}">${canDirect(t) ? 'Edit' : 'Edit*'}</button><button class="btn sec xs" data-act="void" data-col="${t._col}" data-id="${t.id}">${t.status === 'void' ? 'Restore' : 'Void'}</button>${o.del && role() === 'owner' ? `<button class="btn red xs" data-act="del" data-col="${t._col}" data-id="${t.id}">Delete</button>` : ''}</div>` : ''}</div>
     <div class="r">${t.amount > 0 ? `<b class="${t.dir}">${t.dir === 'in' ? '+' : '−'}${inr(t.amount)}</b>` : ''}${x !== 'none' && t.commission ? `<small>${XLABEL[x]} ${inr(t.commission)}</small>` : ''}</div></div>`; }).join('') + (o.note || '');
 }
@@ -368,7 +364,7 @@ function download(sheets, name) {
   XLSX.writeFile(wb, `${name}_${keyOf()}.xlsx`);
 }
 function exportTx(rows) {
-  const data = rows.map(t => ({ Date: keyToStr(t.dateKey), Time: dt(t.createdAt), Group: GROUPS[t.vendorType], Vendor: t.vendorName, Type: t.dir === 'in' ? 'Receive' : 'Send', Mode: t.mode, Bank: t.bank, 'Pay mode': t.payMode, Amount: t.amount, Extra: xt(t) === 'none' ? '' : XLABEL[xt(t)], 'Extra amount': t.commission || 0, 'Tally effect': effect(t), Status: t.status, Note: t.note || '', 'Entered by': t.createdByName || '', Edits: t.editCount || 0, 'Last edited by': t.editedByName || '' }));
+  const data = rows.map(t => ({ Date: keyToStr(t.dateKey), Time: dt(t.createdAt), Group: GROUPS[t.vendorType], Vendor: t.vendorName, Type: t.dir === 'in' ? 'Receive' : 'Send', Amount: t.amount, Extra: xt(t) === 'none' ? '' : XLABEL[xt(t)], 'Extra amount': t.commission || 0, 'Tally effect': effect(t), Status: t.status, Note: t.note || '', 'Entered by': t.createdByName || '', Edits: t.editCount || 0, 'Last edited by': t.editedByName || '' }));
   const vm = {}; rows.filter(t => t.status !== 'void').forEach(t => { const r = vm[t.vendorId] ||= { Group: GROUPS[t.vendorType], Vendor: t.vendorName, Sent: 0, Received: 0, Commission: 0, Earning: 0, Charges: 0, 'Tally effect': 0 }; if (t.dir === 'out') r.Sent += t.amount; else r.Received += t.amount; const x = xt(t); if (x === 'commission') r.Commission += t.commission; if (x === 'earning') r.Earning += t.commission; if (x === 'charge') r.Charges += t.commission; r['Tally effect'] = r2(r['Tally effect'] + effect(t)); });
   download({ Transactions: data, 'Vendor summary': Object.values(vm) }, 'transactions');
 }
@@ -436,7 +432,7 @@ VIEWS.dash = (() => { let root;
 /* --- Transactions / History --- */
 VIEWS.tx = (() => { let root; const F = () => S.f.tx ||= { from: keyToIso(keyOf()), to: keyToIso(keyOf()), vendor: '', group: '', dir: '', mode: '', bank: '', q: '', limit: 100 };
   const filtered = () => { const f = F(); const fk = f.from ? isoToKey(f.from) : 0, tk = f.to ? isoToKey(f.to) : 99999999; const q = f.q.toLowerCase();
-    return sortTx(allTx().filter(t => visibleTypes().includes(t.vendorType) && t.dateKey >= fk && t.dateKey <= tk && (!f.vendor || t.vendorId === f.vendor) && (!f.group || t.vendorType === f.group) && (!f.dir || t.dir === f.dir) && (!f.mode || t.mode === f.mode) && (!f.bank || t.bank === f.bank) && (!q || (t.note || '').toLowerCase().includes(q) || t.vendorName.toLowerCase().includes(q)))); };
+    return sortTx(allTx().filter(t => visibleTypes().includes(t.vendorType) && t.dateKey >= fk && t.dateKey <= tk && (!f.vendor || t.vendorId === f.vendor) && (!f.group || t.vendorType === f.group) && (!f.dir || t.dir === f.dir) && (!q || (t.note || '').toLowerCase().includes(q) || t.vendorName.toLowerCase().includes(q)))); };
   const setRange = (a, b) => { const f = F(); f.from = a; f.to = b; $('[name=from]', root).value = a; $('[name=to]', root).value = b; f.limit = 100; VIEWS.tx.live(); };
   return {
     init(m) {
@@ -447,9 +443,8 @@ VIEWS.tx = (() => { let root; const F = () => S.f.tx ||= { from: keyToIso(keyOf(
       <label>Vendor<select name="vendor"></select></label>
       ${adm ? '<label>Group<select name="group"><option value="">All</option><option value="small">Small vendors</option><option value="main1">Main vendor 1</option><option value="main2">Main vendor 2</option></select></label>' : '<label>Search<input name="q" placeholder="vendor / note"></label>'}
       <label>Send / Receive<select name="dir"><option value="">All</option><option value="out">Send</option><option value="in">Receive</option></select></label>
-      <label>Cash / Online<select name="mode"><option value="">All</option><option value="cash">Cash</option><option value="online">Online</option></select></label>
-      ${adm ? '<label>Bank<select name="bank"></select></label>' : ''}${adm ? '<label>Search<input name="q" placeholder="vendor / note"></label>' : ''}</div></div><div id="live"></div>`;
-      const sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); const bk = $('[name=bank]', m); if (bk) fillSel(bk, [['', 'All banks'], ...S.cfg.banks.map(b => [b, b])]); ['vendor', 'group', 'dir', 'mode', 'bank'].forEach(k => { const el = $(`[name=${k}]`, m); if (el) el.value = f[k]; }); const q = $('[name=q]', m); if (q) q.value = f.q; };
+      ${adm ? '<label>Search<input name="q" placeholder="vendor / note"></label>' : ''}</div></div><div id="live"></div>`;
+      const sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); ['vendor', 'group', 'dir', 'mode', 'bank'].forEach(k => { const el = $(`[name=${k}]`, m); if (el) el.value = f[k]; }); const q = $('[name=q]', m); if (q) q.value = f.q; };
       sync(); VIEWS.tx.sync = sync;
       m.addEventListener('input', e => { const n = e.target.name; if (n && n in f) { f[n] = e.target.value; f.limit = 100; VIEWS.tx.live(); } });
       m.addEventListener('click', e => {
@@ -502,7 +497,7 @@ VIEWS.requests = (() => { let root;
 /* --- Action log --- */
 function describeLog(l) {
   const b = l.before || {}, a = l.after || {};
-  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.dir === 'in' ? 'RECEIVE' : 'SEND'} ${inr(x.amount)} · ${x.mode}${x.bank ? ' ' + esc(x.bank) + '/' + esc(x.payMode) : ''}${x.commission ? ' · ' + (XLABEL[xt(x)] || 'extra') + ' ' + inr(x.commission) : ''}`; }
+  if (l.action === 'create' || l.action === 'delete') { const x = l.action === 'create' ? a : b; return `${x.dir === 'in' ? 'RECEIVE' : 'SEND'} ${inr(x.amount)}${x.commission ? ' · ' + (XLABEL[xt(x)] || 'extra') + ' ' + inr(x.commission) : ''}`; }
   return diffHtml(b, a) + (l.reason ? `<div class="muted">${esc(l.reason)}</div>` : '');
 }
 VIEWS.log = (() => { let root;
@@ -648,14 +643,14 @@ const combo = (subs, memo) => { let root, area, cur;
 };
 VIEWS.review = combo([['approvals', 'Approvals'], ['fix', 'Corrections'], ['log', 'Action log']], 'reviewSub');
 VIEWS.balances = { init(m) { const subs = role() === 'owner' ? [['ledger', 'Tally'], ['opening', 'Opening'], ['charges', 'Charges']] : [['ledger', 'Tally'], ['charges', 'Charges']]; this.c = combo(subs, 'balSub'); this.c.init(m); }, live() { this.c?.live(); } };
-VIEWS.more = combo([['settings', 'Settings'], ['log', 'Action log']], 'moreSub');
+VIEWS.more = VIEWS.log;
 
 /* ================= shell / auth ================= */
 const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase().replace(/\s+/g, '') + '@ledger.local'; };
 const TABS = {
   accountant: [['entry', 'Entry', 'entry'], ['balances', 'Balances', 'ledger'], ['tx', 'History', 'clock'], ['requests', 'My edits', 'edits']],
   owner: [['entry', 'Add entry', 'entry'], ['balances', 'Balances', 'ledger'], ['dash', 'Dashboard', 'dash'], ['tx', 'Transactions', 'tx'], ['review', 'Review', 'review']],
-  admin: [['balances', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'More', 'more']]
+  admin: [['balances', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'Action log', 'review']]
 };
 
 function showLogin() {
