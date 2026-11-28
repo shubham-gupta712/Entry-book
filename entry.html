@@ -252,7 +252,7 @@ const ICON = {
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const inr = n => '₹' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n || 0);
+const inr = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n || 0);
 const num = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n || 0);
 const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
 const sum = (a, f) => r2(a.reduce((s, x) => s + f(x), 0));
@@ -303,9 +303,9 @@ const xt = t => t.commType === 'given' ? 'commission' : t.commType === 'taken' ?
 const XLABEL = { commission: 'Commission', charge: 'Charge', earning: 'Earning' };
 const effect = t => t.status === 'void' ? 0 : (t.dir === 'out' ? t.amount : -t.amount) + (xt(t) === 'earning' ? t.commission : xt(t) === 'commission' ? -t.commission : 0);
 const vendorBalance = vid => r2(allTx().filter(t => t.vendorId === vid).reduce((s, t) => s + effect(t), 0));
-const signed = n => (n < 0 ? '−' : '') + inr(Math.abs(n));
+const signed = n => (n < 0 ? '−' : n > 0 ? '+' : '') + inr(Math.abs(n));
 const balCls = b => b > 0 ? 'pos' : b < 0 ? 'neg' : 'zero';
-const tallyHtml = b => `<div class="bal ${balCls(b)}">${b < 0 ? '−' + inr(-b) : inr(b)}</div>`;
+const tallyHtml = b => `<div class="bal ${balCls(b)}">${signed(b)}</div>`;
 const NK = ['open', 'snd', 'rcv', 'com', 'ern', 'chg', 'close'];
 function ledgerFor(txs, key, types) {
   const map = {};
@@ -369,13 +369,13 @@ async function decide(a, ok, note) {
 function formHtml(t = {}, o = {}) {
   const v = (k, d = '') => esc(t[k] ?? d);
   return `<form autocomplete="off">
+  <div class="vt" data-tally></div>
   <label>Vendor<select name="vendor" required></select></label>
   ${o.group ? '<label data-small hidden>Small vendor<select name="smallVendor"></select></label>' : ''}
-  <div class="vt" data-tally></div>
   <div class="seg dir" data-dir><label><input type="radio" name="dir" value="out" ${t.dir !== 'in' ? 'checked' : ''}><span>Send</span></label><label><input type="radio" name="dir" value="in" ${t.dir === 'in' ? 'checked' : ''}><span>Receive</span></label></div>
-  <label data-amt>Amount (₹)<input name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${v('amount')}"></label>
+  <label data-amt>Amount<input name="amount" type="number" inputmode="decimal" step="0.01" min="0" value="${v('amount')}"></label>
   <div class="row2" data-xrow><label>Add<select name="commType"><option value="none">None</option><option value="commission">Commission</option><option value="charge">Charge</option><option value="earning">Earning</option></select></label>
-  <label data-xamt hidden>Amount (₹)<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${t.commission ? esc(t.commission) : ''}"></label></div>
+  <label data-xamt hidden>Amount<input name="commission" type="number" inputmode="decimal" step="0.01" min="0" value="${t.commission ? esc(t.commission) : ''}"></label></div>
   <div class="fn" data-xhelp hidden></div>
   <div class="row2"><label>Date${o.dateEditable ? '' : ' (today only)'}<input name="date" type="date" required value="${keyToIso(t.dateKey || keyOf())}" ${o.dateEditable ? `max="${keyToIso(keyOf())}"` : 'readonly'}></label>
   <label>Note (optional)<input name="note" value="${v('note')}"></label></div>
@@ -524,7 +524,7 @@ VIEWS.ledger = (() => { let root;
       if (!root) return; const { groups, T } = ledgerCalc(isoToKey(S.f.ledger.d), visibleTypes());
       live(root).innerHTML = kpi([['Opening', signed(T.open)], ['Sent', inr(T.snd), 'out'], ['Received', inr(T.rcv), 'in'], ['Closing', signed(T.close), T.close > 0 ? 'in' : T.close < 0 ? 'out' : '']])
         + groups.map(g => `<div class="card"><div class="gh"><b>${GROUPS[g.ty]}</b><b class="${g.close > 0 ? 'pos' : g.close < 0 ? 'neg' : 'muted'}">${signed(g.close)}</b></div>${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · Sent ${num(r.snd)} · Recv ${num(r.rcv)}${r.com ? ' · Comm ' + num(r.com) : ''}${r.ern ? ' · Earn ' + num(r.ern) : ''}${r.chg ? ' · Charge ' + num(r.chg) : ''}</small></div><div class="r"><b class="${r.close > 0 ? 'pos' : r.close < 0 ? 'neg' : ''}">${signed(r.close)}</b></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
-        + '<div class="fn">Tally = what the vendor owes the owner (+) or the owner owes the vendor (−). Send adds, Receive reduces, Commission reduces, Earning adds. Charges are not in the tally. All vendors together should close at ₹0; leftovers carry to the next day.</div>';
+        + '<div class="fn">Tally = what the vendor owes the owner (+) or the owner owes the vendor (−). Send adds, Receive reduces, Commission reduces, Earning adds. Charges are not in the tally. All vendors together should close at 0; leftovers carry to the next day.</div>';
     }
   };
 })();
@@ -542,7 +542,7 @@ VIEWS.dash = (() => { let root;
       const day = allTx().filter(t => t.dateKey === key && t.status !== 'void');
       const pend = S.approvals.filter(a => a.status === 'pending').length;
       const xs = k => inr(sum(day.filter(t => xt(t) === k), t => t.commission));
-      live(root).innerHTML = `<div class="bal ${balCls(T.close)}"><small>Current balance</small><span>${T.close < 0 ? '−' + inr(-T.close) : inr(T.close)}</span></div>
+      live(root).innerHTML = `<div class="bal ${balCls(T.close)}"><small>Current balance</small><span>${signed(T.close)}</span></div>
       <div class="tiles">${groups.map(g => `<div class="tile"><small>${SHORT[g.ty]}</small><b class="${g.close > 0 ? 'pos' : g.close < 0 ? 'neg' : ''}">${signed(g.close)}</b><small>Sent ${num(g.snd)} · Recv ${num(g.rcv)}</small></div>`).join('')}</div>
       ${kpi([['Earning', xs('earning'), 'in'], ['Commission', xs('commission')], ['Charges', xs('charge'), 'out'], ['Pending', pend, pend ? 'warn' : '', 'data-act="go" data-tab="review"']])}
       <div class="card"><div class="gh"><b>Entries · ${keyToStr(key)}</b></div>${txList(sortTx(day).slice(0, 6), { act: false })}</div>`;
