@@ -157,6 +157,8 @@ label{color:var(--mut);font-weight:600}
 .dd-opt.sel{background:var(--acc);color:var(--onacc);font-weight:800}
 .dd-opt.sel:after{content:"✓";font-weight:800}
 select.dd-native{display:none!important}
+.vadd{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end}.vadd label{margin:0}.vadd .btn{height:46px;padding:0 22px}
+.card{position:relative}.card:has(.dd.open){z-index:30}
 </style>
 </head>
 <body>
@@ -382,11 +384,12 @@ function formHtml(t = {}, o = {}) {
   ${o.reason ? '<label>Reason for change (sent to owner)<input name="reason" required></label>' : ''}
   <button class="btn full" type="submit">${o.submit || 'Save entry'}</button></form>`;
 }
+const vlabel = v => (v.name || '').trim().toLowerCase() === (GROUPS[v.type] || '').trim().toLowerCase() ? v.name : `${v.name} · ${GROUPS[v.type]}`;
 const fillSel = (sel, opts) => { const cur = sel.value; sel.innerHTML = opts.map(x => `<option value="${esc(x[0])}">${esc(x[1])}</option>`).join(''); if ([...sel.options].some(o => o.value === cur)) sel.value = cur; };
 function syncForm(f, types, curVendor) {
   const vs = S.vendors.filter(v => types.includes(v.type) && (v.active !== false || v.id === curVendor)).sort(byName);
   const grp = !!f.elements.smallVendor;
-  const vo = vs.filter(v => !grp || v.type !== 'small').map(v => [v.id, types.length > 1 ? `${v.name} · ${GROUPS[v.type]}` : v.name]);
+  const vo = vs.filter(v => !grp || v.type !== 'small').map(v => [v.id, types.length > 1 ? vlabel(v) : v.name]);
   if (grp) { vo.push(['__small', 'Small vendors ▸']); const sv = vs.filter(v => v.type === 'small').map(v => [v.id, v.name]); fillSel(f.elements.smallVendor, sv.length ? sv : [['', 'No small vendors yet']]); }
   fillSel(f.elements.vendor, vo.length ? vo : [['', 'No vendors yet – ask admin to add']]);
 }
@@ -523,7 +526,7 @@ VIEWS.ledger = (() => { let root;
     live() {
       if (!root) return; const { groups, T } = ledgerCalc(isoToKey(S.f.ledger.d), visibleTypes());
       live(root).innerHTML = kpi([['Opening', signed(T.open)], ['Sent', inr(T.snd), 'out'], ['Received', inr(T.rcv), 'in'], ['Closing', signed(T.close), T.close > 0 ? 'in' : T.close < 0 ? 'out' : '']])
-        + groups.map(g => `<div class="card"><div class="gh"><b>${GROUPS[g.ty]}</b><b class="${g.close > 0 ? 'pos' : g.close < 0 ? 'neg' : 'muted'}">${signed(g.close)}</b></div>${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · Sent ${num(r.snd)} · Recv ${num(r.rcv)}${r.com ? ' · Comm ' + num(r.com) : ''}${r.ern ? ' · Earn ' + num(r.ern) : ''}${r.chg ? ' · Charge ' + num(r.chg) : ''}</small></div><div class="r"><b class="${r.close > 0 ? 'pos' : r.close < 0 ? 'neg' : ''}">${signed(r.close)}</b></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
+        + groups.map(g => `<div class="card">${g.ty !== 'small' && g.rs.length === 1 && g.rs[0].name.trim().toLowerCase() === GROUPS[g.ty].trim().toLowerCase() ? '' : `<div class="gh"><b>${esc(GROUPS[g.ty])}</b><b class="${g.close > 0 ? 'pos' : g.close < 0 ? 'neg' : 'muted'}">${signed(g.close)}</b></div>`}${g.rs.map(r => `<div class="li"><div class="l"><b>${esc(r.name)}</b><small>Open ${num(r.open)} · Sent ${num(r.snd)} · Recv ${num(r.rcv)}${r.com ? ' · Comm ' + num(r.com) : ''}${r.ern ? ' · Earn ' + num(r.ern) : ''}${r.chg ? ' · Charge ' + num(r.chg) : ''}</small></div><div class="r"><b class="${r.close > 0 ? 'pos' : r.close < 0 ? 'neg' : ''}">${signed(r.close)}</b></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">No activity</p>'}</div>`).join('')
         + '<div class="fn">Tally = what the vendor owes the owner (+) or the owner owes the vendor (−). Send adds, Receive reduces, Commission reduces, Earning adds. Charges are not in the tally. All vendors together should close at 0; leftovers carry to the next day.</div>';
     }
   };
@@ -639,10 +642,10 @@ VIEWS.log = (() => { let root;
 VIEWS.vlist = (() => { let root;
   return {
     init(m) { root = m;
-      m.innerHTML = `<div class="card"><form class="row3"><label>New vendor<input name="name" required placeholder="Name"></label><label>Group<select name="type">${ALL_TYPES.map(k => `<option value="${k}">${esc(GROUPS[k])}</option>`).join('')}</select></label><button class="btn">Add</button></form></div><div id="live"></div>`;
+      m.innerHTML = `<div class="card"><form class="vadd"><label style="grid-column:1/-1">New vendor<input name="name" required placeholder="Name"></label><label>Group<select name="type">${ALL_TYPES.map(k => `<option value="${k}">${esc(GROUPS[k])}</option>`).join('')}</select></label><button class="btn">Add</button></form></div><div id="live"></div>`;
       $('form', m).addEventListener('submit', async e => { e.preventDefault(); const f = e.target; try { await addDoc(collection(db, 'vendors'), { name: f.name.value.trim(), type: f.type.value, active: true, createdAt: serverTimestamp() }); f.name.value = ''; toast('Vendor added'); } catch (err) { toast(errMsg(err), true); } });
     },
-    live() { if (root) live(root).innerHTML = ALL_TYPES.map(ty => `<div class="card"><div class="gh"><b>${GROUPS[ty]}</b></div>${S.vendors.filter(v => v.type === ty).sort(byName).map(v => `<div class="li"><div class="l"><b>${esc(v.name)}${v.active === false ? '<span class="tag r">inactive</span>' : ''}</b>${v.phone || v.note ? `<small>${esc(v.phone || '')}${v.phone && v.note ? ' · ' : ''}${esc(v.note || '')}</small>` : ''}</div><div class="acts" style="margin:0"><button class="btn sec xs" data-act="vedit" data-id="${v.id}">Edit</button><button class="btn sec xs" data-act="vtoggle" data-id="${v.id}">${v.active === false ? 'Activate' : 'Deactivate'}</button><button class="btn red xs" data-act="vdel" data-id="${v.id}">✕</button></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">None</p>'}</div>`).join(''); }
+    live() { if (root) live(root).innerHTML = ALL_TYPES.map(ty => `<div class="card">${ty === 'small' || !S.vendors.some(v => v.type === ty) ? `<div class="gh"><b>${esc(GROUPS[ty])}</b></div>` : ''}${S.vendors.filter(v => v.type === ty).sort(byName).map(v => `<div class="li"><div class="l"><b>${esc(v.name)}${v.active === false ? '<span class="tag r">inactive</span>' : ''}</b>${v.phone || v.note ? `<small>${esc(v.phone || '')}${v.phone && v.note ? ' · ' : ''}${esc(v.note || '')}</small>` : ''}</div><div class="acts" style="margin:0"><button class="btn sec xs" data-act="vedit" data-id="${v.id}">Edit</button><button class="btn sec xs" data-act="vtoggle" data-id="${v.id}">${v.active === false ? 'Activate' : 'Deactivate'}</button><button class="btn red xs" data-act="vdel" data-id="${v.id}">✕</button></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">None</p>'}</div>`).join(''); }
   };
 })();
 
@@ -743,7 +746,7 @@ VIEWS.fix = (() => { let root; const F = () => S.f.fix ||= { from: addDays(keyTo
       m.innerHTML = `<div class="fn" style="margin-top:0">Fix or delete any entry, or add one for a past date. Every change is recorded in the Action log.</div>
       <div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}"><button class="btn ic" data-add="1">+ Backdated</button></div>
       <div class="bar"><select name="vendor" style="margin:0"></select></div><div id="live"></div>`;
-      VIEWS.fix.sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...[...S.vendors].sort(byName).map(v => [v.id, `${v.name} · ${SHORT[v.type]}`])]); $('[name=vendor]', m).value = f.vendor; };
+      VIEWS.fix.sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...[...S.vendors].sort(byName).map(v => [v.id, vlabel(v)])]); $('[name=vendor]', m).value = f.vendor; };
       VIEWS.fix.sync();
       m.addEventListener('input', e => { const n = e.target.name; if (n && n in f) { f[n] = e.target.value; VIEWS.fix.live(); } });
       m.addEventListener('click', e => { if (e.target.closest('[data-add]')) openBackdated(); });
