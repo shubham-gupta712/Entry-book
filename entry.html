@@ -143,12 +143,72 @@ label{color:var(--mut);font-weight:600}
 .login .card{padding:22px}
 ::-webkit-calendar-picker-indicator{filter:invert(.8)}
 #toast{bottom:104px}
+.dd{position:relative;margin-top:4px;min-width:0}.bar .dd{flex:1}
+.dd-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:14px;background:var(--fld);color:var(--ink);font-size:15px;cursor:pointer;user-select:none;min-height:44px;transition:border-color .15s,box-shadow .15s}
+.dd-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-btn svg{flex:none;width:16px;height:16px;fill:none;stroke:var(--mut);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.dd.open .dd-btn{border-color:var(--acc);box-shadow:0 0 0 3px #d6f36b2e}.dd.open .dd-btn svg{transform:rotate(180deg)}
+.dd.off .dd-btn{opacity:.5;pointer-events:none}
+.dd-list{position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:40;max-height:250px;overflow-y:auto;background:#241a3f;border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:5px;box-shadow:0 16px 40px #000a;opacity:0;visibility:hidden;transform:translateY(-6px) scale(.98);transform-origin:top;transition:opacity .16s,transform .16s,visibility 0s .16s}
+.dd.up .dd-list{top:auto;bottom:calc(100% + 6px);transform:translateY(6px) scale(.98);transform-origin:bottom}
+.dd.open .dd-list{opacity:1;visibility:visible;transform:none;transition:opacity .16s,transform .16s}
+.dd-opt{padding:11px 12px;border-radius:11px;font-size:14.5px;color:var(--ink);cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.dd-opt:active,.dd-opt:hover{background:rgba(255,255,255,.08)}
+.dd-opt.sel{background:var(--acc);color:var(--onacc);font-weight:800}
+.dd-opt.sel:after{content:"✓";font-weight:800}
+select.dd-native{display:none!important}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="toast"></div>
 
+<script>
+(() => {
+  const CH = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+  let openDd = null;
+  const label = sel => { const o = sel.options[sel.selectedIndex]; return o ? o.textContent : ''; };
+  const refresh = sel => { const d = sel._dd; if (!d) return; d.firstChild.firstChild.textContent = label(sel) || '—'; d.classList.toggle('off', sel.disabled); };
+  const close = () => { if (openDd) { openDd.classList.remove('open'); openDd = null; } };
+  function build(sel) {
+    const d = sel._dd, list = d.lastChild; list.textContent = '';
+    [...sel.options].forEach((o, i) => { const e = document.createElement('div'); e.className = 'dd-opt' + (i === sel.selectedIndex ? ' sel' : ''); e.textContent = o.textContent; e.dataset.i = i; if (o.disabled) e.style.opacity = .4; list.appendChild(e); });
+  }
+  function open(sel) {
+    const d = sel._dd; if (openDd === d) return close(); close(); if (sel.disabled) return;
+    build(sel);
+    const r = d.getBoundingClientRect(), below = innerHeight - r.bottom, above = r.top;
+    const need = Math.min(250, sel.options.length * 44 + 12);
+    d.classList.toggle('up', below < need + 90 && above > below);
+    d.classList.add('open'); openDd = d;
+    const s = d.querySelector('.sel'); if (s) d.lastChild.scrollTop = Math.max(0, s.offsetTop - 60);
+    const lr = d.lastChild.getBoundingClientRect(); if (lr.bottom > innerHeight - 90 && !d.classList.contains('up')) { const sc = d.closest('main,.sheet') ; if (sc) sc.scrollBy({ top: lr.bottom - innerHeight + 100, behavior: 'smooth' }); }
+  }
+  function enhance(sel) {
+    if (sel._dd || sel.multiple) return;
+    const d = document.createElement('div'); d.className = 'dd';
+    d.innerHTML = '<div class="dd-btn" tabindex="0" role="button"><span></span>' + CH + '</div><div class="dd-list"></div>';
+    sel.classList.add('dd-native'); sel.after(d); sel._dd = d; d._sel = sel; refresh(sel);
+    d.addEventListener('click', e => {
+      e.preventDefault(); e.stopPropagation();
+      const o = e.target.closest('.dd-opt');
+      if (o) { sel.selectedIndex = +o.dataset.i; refresh(sel); close(); sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      else if (e.target.closest('.dd-btn')) open(sel);
+    });
+    d.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(sel); } else if (e.key === 'Escape') close(); });
+  }
+  const scan = root => { if (root.nodeType !== 1) return; if (root.tagName === 'SELECT') enhance(root); else root.querySelectorAll && root.querySelectorAll('select').forEach(enhance); };
+  ['value', 'selectedIndex'].forEach(p => { const D = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, p); Object.defineProperty(HTMLSelectElement.prototype, p, { get: D.get, set(v) { D.set.call(this, v); refresh(this); }, configurable: true }); });
+  const start = () => {
+    scan(document.documentElement);
+    new MutationObserver(ms => { for (const m of ms) { m.addedNodes.forEach(scan); const t = m.target; if (t.tagName === 'SELECT') refresh(t); else if (t.parentNode && t.parentNode.tagName === 'SELECT') refresh(t.parentNode); } })
+      .observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['disabled'] });
+  };
+  document.addEventListener('click', e => { if (openDd && !openDd.contains(e.target)) close(); }, true);
+  document.addEventListener('scroll', e => { if (openDd && !openDd.contains(e.target)) close(); }, true);
+  start();
+})();
+</script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
