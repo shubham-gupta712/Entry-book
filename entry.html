@@ -41,11 +41,11 @@ input[readonly]{background:#f1f3f5;color:var(--mut)}
 .btn.sec{background:#e8ecf0;color:var(--ink)}.btn.red{background:var(--out)}
 .btn.xs{padding:4px 9px;font-size:12px;font-weight:600}.btn.ic{padding:8px 13px}
 .btn.full{width:100%}.btn:disabled{opacity:.5}
-.kpi{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;overflow:hidden}
-.k{padding:7px 9px;border-left:1px solid var(--line);min-width:0}
-.k:first-child{border-left:0}
+.kpi{display:grid;grid-template-columns:1fr 1fr;background:#fff;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;overflow:hidden}
+.k{padding:10px 14px;border-left:1px solid var(--line);border-top:1px solid var(--line);min-width:0}
+.k:nth-child(odd){border-left:0}.k:nth-child(-n+2){border-top:0}
 .k small{display:block;color:var(--mut);font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.k b{display:block;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.k b{display:block;font-size:20px;line-height:1.25;white-space:nowrap}
 .k.in b{color:var(--in)}.k.out b{color:var(--out)}.k.warn b{color:var(--warn)}
 .banner{display:flex;justify-content:space-between;padding:8px 12px;border-radius:10px;font-weight:700;margin-bottom:8px}
 .banner.ok{background:#dcfce7;color:var(--in)}.banner.wn{background:#fef3c7;color:var(--warn)}
@@ -515,7 +515,7 @@ VIEWS.ledger = (() => { let root;
   return {
     init(m) {
       root = m; const f = S.f.ledger ||= { d: keyToIso(keyOf()) };
-      m.innerHTML = `<div class="bar"><input type="date" name="d" value="${f.d}"><button class="btn sec ic" data-n="-1">‹</button><button class="btn sec ic" data-n="1">›</button>${role() !== 'accountant' ? '<button class="btn ic" data-x="1">⬇ Excel</button>' : ''}</div><div id="live"></div>`;
+      m.innerHTML = `<div class="bar"><input type="date" name="d" value="${f.d}"><button class="btn sec ic" data-n="-1">‹</button><button class="btn sec ic" data-n="1">›</button></div><div id="live"></div>`;
       m.addEventListener('input', e => { if (e.target.name === 'd' && e.target.value) { f.d = e.target.value; VIEWS.ledger.live(); } });
       m.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.n) { f.d = addDays(f.d, +b.dataset.n); $('[name=d]', m).value = f.d; VIEWS.ledger.live(); }
         if (b.dataset.x) { const rows = ledgerFor(allTx(), isoToKey(f.d), visibleTypes()).map(r => ({ Group: GROUPS[r.type], Vendor: r.name, Opening: r.open, Sent: r.snd, Received: r.rcv, Commission: r.com, Earning: r.ern, Charges: r.chg, Closing: r.close })); download({ Balances: rows }, 'balances_' + f.d); } });
@@ -559,7 +559,7 @@ VIEWS.tx = (() => { let root; const F = () => S.f.tx ||= { from: keyToIso(keyOf(
     init(m) {
       root = m; const f = F(), adm = role() !== 'accountant';
       m.innerHTML = `<div class="chips">${['Today', 'Yesterday', 'This week', 'This month', 'Last month', 'All time'].map(c => `<button type="button" data-q="${c}">${c}</button>`).join('')}</div>
-      <div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}"><button class="btn sec ic" data-flt="1">Filters</button>${adm ? '<button class="btn ic" data-x="1">⬇</button>' : ''}</div>
+      <div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}"><button class="btn sec ic" data-flt="1">Filters</button></div>
       <div class="card" id="flt" hidden><div class="filters">
       <label>Vendor<select name="vendor"></select></label>
       ${adm ? '<label>Group<select name="group"><option value="">All</option><option value="small">Small vendors</option><option value="main1">Main vendor 1</option><option value="main2">Main vendor 2</option></select></label>' : '<label>Search<input name="q" placeholder="vendor / note"></label>'}
@@ -626,7 +626,7 @@ VIEWS.log = (() => { let root;
   const rows = () => { const f = F(), q = f.q.toLowerCase(); return S.logs.filter(l => (!f.action || l.action === f.action) && (!q || (l.vendorName || '').toLowerCase().includes(q) || (l.byName || '').toLowerCase().includes(q))); };
   return {
     init(m) { root = m; const f = F();
-      m.innerHTML = `<div class="bar"><select name="action" style="margin:0;flex:1"><option value="">All actions</option>${['create', 'edit', 'void', 'restore', 'request_edit', 'approved', 'rejected', 'delete'].map(a => `<option value="${a}">${a}</option>`).join('')}</select><input name="q" placeholder="Search" value="${esc(f.q)}"><button class="btn ic" data-x="1">⬇</button></div><div id="live"></div>`;
+      m.innerHTML = `<div class="bar"><select name="action" style="margin:0;flex:1"><option value="">All actions</option>${['create', 'edit', 'void', 'restore', 'request_edit', 'approved', 'rejected', 'delete'].map(a => `<option value="${a}">${a}</option>`).join('')}</select><input name="q" placeholder="Search" value="${esc(f.q)}"></div><div id="live"></div>`;
       $('[name=action]', m).value = f.action;
       m.addEventListener('input', e => { if (e.target.name in f) { f[e.target.name] = e.target.value; VIEWS.log.live(); } });
       m.addEventListener('click', e => { if (e.target.closest('[data-x]')) download({ Log: rows().map(l => ({ Time: dt(l.ts), User: l.byName, Role: l.role, Action: l.action, Vendor: l.vendorName || '', 'Entry date': l.dateKey ? keyToStr(l.dateKey) : '', Before: JSON.stringify(l.before || {}), After: JSON.stringify(l.after || {}), Reason: l.reason || '' })) }, 'action_log'); });
@@ -636,10 +636,10 @@ VIEWS.log = (() => { let root;
 })();
 
 /* --- Admin: vendors --- */
-VIEWS.vendors = (() => { let root;
+VIEWS.vlist = (() => { let root;
   return {
     init(m) { root = m;
-      m.innerHTML = `<div class="card"><form class="row3"><label>New vendor<input name="name" required placeholder="Name"></label><label>Group<select name="type"><option value="small">Small</option><option value="main1">Main 1</option><option value="main2">Main 2</option></select></label><button class="btn">Add</button></form></div><div id="live"></div>`;
+      m.innerHTML = `<div class="card"><form class="row3"><label>New vendor<input name="name" required placeholder="Name"></label><label>Group<select name="type">${ALL_TYPES.map(k => `<option value="${k}">${esc(GROUPS[k])}</option>`).join('')}</select></label><button class="btn">Add</button></form></div><div id="live"></div>`;
       $('form', m).addEventListener('submit', async e => { e.preventDefault(); const f = e.target; try { await addDoc(collection(db, 'vendors'), { name: f.name.value.trim(), type: f.type.value, active: true, createdAt: serverTimestamp() }); f.name.value = ''; toast('Vendor added'); } catch (err) { toast(errMsg(err), true); } });
     },
     live() { if (root) live(root).innerHTML = ALL_TYPES.map(ty => `<div class="card"><div class="gh"><b>${GROUPS[ty]}</b></div>${S.vendors.filter(v => v.type === ty).sort(byName).map(v => `<div class="li"><div class="l"><b>${esc(v.name)}${v.active === false ? '<span class="tag r">inactive</span>' : ''}</b>${v.phone || v.note ? `<small>${esc(v.phone || '')}${v.phone && v.note ? ' · ' : ''}${esc(v.note || '')}</small>` : ''}</div><div class="acts" style="margin:0"><button class="btn sec xs" data-act="vedit" data-id="${v.id}">Edit</button><button class="btn sec xs" data-act="vtoggle" data-id="${v.id}">${v.active === false ? 'Activate' : 'Deactivate'}</button><button class="btn red xs" data-act="vdel" data-id="${v.id}">✕</button></div></div>`).join('') || '<p class="muted" style="margin:4px 0 0">None</p>'}</div>`).join(''); }
@@ -666,7 +666,7 @@ VIEWS.users = (() => { let root;
 VIEWS.settings = (() => { let root, dirty = false;
   return {
     init(m) { root = m; dirty = false;
-      m.innerHTML = `<div class="card"><div class="gh"><b>Vendor category names</b></div>${ALL_TYPES.map(k => `<label>${k === 'small' ? 'Category 1 (small vendors)' : k === 'main1' ? 'Category 2' : 'Category 3'}<input name="${k}" maxlength="30"></label>`).join('')}<button class="btn full" id="sv">Save names</button><div class="fn" style="margin-top:6px">Only the display name changes; existing vendors and entries stay in place.</div></div>`;
+      m.innerHTML = `<div class="card"><div class="gh"><b>Rename vendor groups</b></div>${ALL_TYPES.map(k => `<label>${k === 'small' ? 'Group 1 name' : k === 'main1' ? 'Group 2 name' : 'Group 3 name'}<input name="${k}" maxlength="30"></label>`).join('')}<button class="btn full" id="sv">Save names</button><div class="fn" style="margin-top:6px">Only the display name changes; existing vendors and entries stay in place.</div></div>`;
       m.addEventListener('input', () => dirty = true);
       $('#sv', m).onclick = async () => { const groups = {}; ALL_TYPES.forEach(k => groups[k] = $(`[name=${k}]`, m).value.trim() || DEFAULT_GROUPS[k]); try { await setDoc(doc(db, 'settings', 'config'), { groups }, { merge: true }); dirty = false; toast('Saved'); } catch (e) { toast(errMsg(e), true); } };
       this.live();
@@ -715,7 +715,7 @@ VIEWS.charges = (() => { let root;
   const byVendor = r => { const m = {}; r.forEach(t => { const o = m[t.vendorId] ||= { name: t.vendorName, n: 0, total: 0 }; o.n++; o.total += t.commission; }); return Object.values(m).map(o => ({ ...o, total: r2(o.total) })).sort((a, b) => b.total - a.total); };
   return {
     init(m) { root = m; const f = F();
-      m.innerHTML = `<div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}">${role() !== 'accountant' ? '<button class="btn ic" data-x="1">⬇</button>' : ''}</div>
+      m.innerHTML = `<div class="bar"><input type="date" name="from" value="${f.from}"><input type="date" name="to" value="${f.to}"></div>
       <div class="bar"><select name="type" style="margin:0"><option value="charge">Charges</option><option value="commission">Commission</option><option value="earning">Earning</option></select><select name="vendor" style="margin:0"></select></div><div id="live"></div>`;
       VIEWS.charges.sync = () => { fillSel($('[name=vendor]', m), [['', 'All vendors'], ...S.vendors.filter(v => visibleTypes().includes(v.type)).sort(byName).map(v => [v.id, v.name])]); $('[name=vendor]', m).value = f.vendor; $('[name=type]', m).value = f.type; };
       VIEWS.charges.sync();
@@ -764,14 +764,15 @@ const combo = (subs, memo) => { let root, area, cur;
 };
 VIEWS.review = combo([['approvals', 'Approvals'], ['fix', 'Corrections'], ['log', 'Action log']], 'reviewSub');
 VIEWS.balances = { init(m) { const subs = role() === 'owner' ? [['ledger', 'Tally'], ['opening', 'Opening'], ['charges', 'Charges']] : [['ledger', 'Tally'], ['charges', 'Charges']]; this.c = combo(subs, 'balSub'); this.c.init(m); }, live() { this.c?.live(); } };
-VIEWS.more = combo([['settings', 'Categories'], ['log', 'Action log']], 'moreSub');
+VIEWS.more = VIEWS.log;
+VIEWS.vendors = combo([['vlist', 'Vendors'], ['settings', 'Group names']], 'vSub');
 
 /* ================= shell / auth ================= */
 const toEmail = u => { u = u.trim(); return u.includes('@') ? u : u.toLowerCase().replace(/\s+/g, '') + '@ledger.local'; };
 const TABS = {
   accountant: [['entry', 'Entry', 'entry'], ['balances', 'Balances', 'ledger'], ['tx', 'History', 'clock'], ['requests', 'My edits', 'edits']],
   owner: [['entry', 'Add entry', 'entry'], ['balances', 'Balances', 'ledger'], ['dash', 'Dashboard', 'dash'], ['tx', 'Transactions', 'tx'], ['review', 'Review', 'review']],
-  admin: [['balances', 'Balances', 'ledger'], ['tx', 'Entries', 'tx'], ['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'More', 'review']]
+  admin: [['vendors', 'Vendors', 'vendors'], ['users', 'Users', 'users'], ['more', 'Action log', 'review']]
 };
 
 function showLogin() {
